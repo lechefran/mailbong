@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -15,13 +13,19 @@ import (
 
 type App struct {
 	Client      *IMAPClient
-	Login       func(context.Context) (SessionWithInboxRead, error)
+	Accounts    []ConfiguredAccount
+	Login       func(context.Context, *IMAPClient) (SessionWithInboxRead, error)
 	Action      string
 	Timeout     time.Duration
 	Range       string
 	Now         func() time.Time
 	Output      io.Writer
 	PrintEmails func(io.Writer, []EmailSummary) error
+}
+
+type ConfiguredAccount struct {
+	Name   string
+	Client *IMAPClient
 }
 
 type InboxReader interface {
@@ -41,8 +45,13 @@ type SessionWithInboxRead interface {
 }
 
 func (a *App) Run(ctx context.Context) error {
-	if a == nil || a.Client == nil {
-		return fmt.Errorf("imap client is required")
+	if a == nil {
+		return fmt.Errorf("app is required")
+	}
+
+	accounts, err := a.resolveAccounts()
+	if err != nil {
+		return err
 	}
 
 	timeout := a.Timeout
@@ -50,27 +59,11 @@ func (a *App) Run(ctx context.Context) error {
 		timeout = 15 * time.Second
 	}
 
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
 	login := a.Login
 	if login == nil {
-		login = func(ctx context.Context) (SessionWithInboxRead, error) {
-			return a.Client.Login(ctx)
+		login = func(ctx context.Context, client *IMAPClient) (SessionWithInboxRead, error) {
+			return client.Login(ctx)
 		}
-	}
-
-	session, err := login(runCtx)
-	if err != nil {
-		return err
-	}
-	defer session.Logout()
-
-	log.Printf("connected to IMAP server %s as %s", a.Client.Address, a.Client.Email)
-
-	emails, err := a.runActionByRange(session)
-	if err != nil {
-		return err
 	}
 
 	output := a.Output
@@ -82,14 +75,55 @@ func (a *App) Run(ctx context.Context) error {
 	if printEmails == nil {
 		printEmails = writeEmailSummaries
 	}
-	if err := printEmails(output, emails); err != nil {
-		return err
-	}
-	if a.Action == "delete" {
-		if _, err := fmt.Fprintf(output, "deleted %d emails\n", len(emails)); err != nil {
+
+	var failures []string
+	for index, account := range accounts {
+		runCtx, cancel := context.WithTimeout(ctx, timeout)
+		session, err := login(runCtx, account.Client)
+		cancel()
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", account.Name, err))
+			continue
+		}
+
+		log.Printf("connected to IMAP server %s as %s", account.Client.Address, account.Client.Email)
+
+		if len(accounts) > 1 {
+			if index > 0 {
+				if _, err := fmt.Fprintln(output); err != nil {
+					_ = session.Logout()
+					return err
+				}
+			}
+			if _, err := fmt.Fprintf(output, "account=%s email=%s\n", account.Name, account.Client.Email); err != nil {
+				_ = session.Logout()
+				return err
+			}
+		}
+
+		emails, err := a.runActionByRange(session)
+		logoutErr := session.Logout()
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", account.Name, err))
+			continue
+		}
+		if logoutErr != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", account.Name, logoutErr))
+			continue
+		}
+
+		if err := printEmails(output, emails); err != nil {
+			return err
+		}
+		if err := writeActionSummary(output, a.Action, len(emails)); err != nil {
 			return err
 		}
 	}
+
+	if len(failures) > 0 {
+		return fmt.Errorf("%d account(s) failed: %s", len(failures), strings.Join(failures, "; "))
+	}
+
 	return nil
 }
 
@@ -106,30 +140,53 @@ func main() {
 
 func newAppFromFlags() (*App, error) {
 	action := flag.String("action", envOrDefault("MAILBIN_ACTION", "read"), "action to perform: read or delete")
+	configPath := flag.String("config", envOrDefault("MAILBIN_CONFIG", ""), "path to accounts config JSON")
+	accountName := flag.String("account", envOrDefault("MAILBIN_ACCOUNT", ""), "account name from config to run")
+	provider := flag.String("provider", envOrDefault("MAILBIN_PROVIDER", ""), "email provider name for built-in IMAP defaults")
 	address := flag.String("imap-addr", envOrDefault("MAILBIN_IMAP_ADDR", ""), "IMAP server address in host:port format")
 	email := flag.String("email", envOrDefault("MAILBIN_EMAIL", ""), "email address used for IMAP login")
 	emailRange := flag.String("range", envOrDefault("MAILBIN_RANGE", "all"), "email range to read: all, today, week, or month")
 	timeout := flag.Duration("timeout", 15*time.Second, "connection timeout")
 	flag.Parse()
 
-	password, err := resolvePassword(os.Stdin, os.Stderr, os.Getenv, stdinIsInteractive())
+	if *configPath == "" {
+		password, err := resolvePassword(os.Stdin, os.Stderr, os.Getenv, stdinIsInteractive())
+		if err != nil {
+			return nil, err
+		}
+		addressValue, err := resolveIMAPAddress(*provider, *address)
+		if err != nil {
+			return nil, err
+		}
+
+		client := &IMAPClient{
+			Address:  addressValue,
+			Email:    *email,
+			Password: password,
+		}
+
+		return &App{
+			Client:  client,
+			Action:  *action,
+			Timeout: *timeout,
+			Range:   *emailRange,
+			Now:     time.Now,
+			Output:  os.Stdout,
+		}, nil
+	}
+
+	accounts, err := loadConfiguredAccounts(*configPath, *accountName, os.Stdin, os.Stderr, os.Getenv, stdinIsInteractive())
 	if err != nil {
 		return nil, err
 	}
 
-	client := &IMAPClient{
-		Address:  *address,
-		Email:    *email,
-		Password: password,
-	}
-
 	return &App{
-		Client:  client,
-		Action:  *action,
-		Timeout: *timeout,
-		Range:   *emailRange,
-		Now:     time.Now,
-		Output:  os.Stdout,
+		Accounts: accounts,
+		Action:   *action,
+		Timeout:  *timeout,
+		Range:    *emailRange,
+		Now:      time.Now,
+		Output:   os.Stdout,
 	}, nil
 }
 
@@ -142,24 +199,7 @@ func resolvePassword(input io.Reader, prompt io.Writer, getenv func(string) stri
 		return "", fmt.Errorf("MAILBIN_PASSWORD is required when stdin is not interactive")
 	}
 
-	if prompt != nil {
-		if _, err := fmt.Fprint(prompt, "Enter IMAP password: "); err != nil {
-			return "", fmt.Errorf("write password prompt: %w", err)
-		}
-	}
-
-	reader := bufio.NewReader(input)
-	password, err := reader.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", fmt.Errorf("read password: %w", err)
-	}
-
-	password = strings.TrimRight(password, "\r\n")
-	if password == "" {
-		return "", fmt.Errorf("password is required")
-	}
-
-	return password, nil
+	return promptPassword(input, prompt, "Enter IMAP password: ")
 }
 
 func stdinIsInteractive() bool {
@@ -180,6 +220,22 @@ func (a *App) runActionByRange(session SessionWithInboxRead) ([]EmailSummary, er
 	default:
 		return nil, fmt.Errorf("invalid action %q: must be read or delete", a.Action)
 	}
+}
+
+func (a *App) resolveAccounts() ([]ConfiguredAccount, error) {
+	if len(a.Accounts) > 0 {
+		return a.Accounts, nil
+	}
+	if a.Client != nil {
+		return []ConfiguredAccount{
+			{
+				Name:   defaultAccountName(a.Client.Email),
+				Client: a.Client,
+			},
+		}, nil
+	}
+
+	return nil, fmt.Errorf("at least one account is required")
 }
 
 func (a *App) readByRange(session InboxReader) ([]EmailSummary, error) {
@@ -239,6 +295,27 @@ func writeEmailSummaries(output io.Writer, emails []EmailSummary) error {
 	}
 
 	return nil
+}
+
+func writeActionSummary(output io.Writer, action string, count int) error {
+	switch action {
+	case "", "read":
+		_, err := fmt.Fprintf(output, "retrieved %d emails\n", count)
+		return err
+	case "delete":
+		_, err := fmt.Fprintf(output, "deleted %d emails\n", count)
+		return err
+	default:
+		return fmt.Errorf("invalid action %q: must be read or delete", action)
+	}
+}
+
+func defaultAccountName(email string) string {
+	if email == "" {
+		return "account"
+	}
+
+	return email
 }
 
 func envOrDefault(key, fallback string) string {

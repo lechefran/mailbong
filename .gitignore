@@ -15,6 +15,7 @@ go.work.sum
 *.local
 config*.local
 config*.local.*
+accounts.json
 
 # Repository-local skills
 skills/

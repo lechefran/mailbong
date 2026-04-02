@@ -16,6 +16,34 @@ import (
 	"time"
 )
 
+type ADDR string
+
+const (
+	AOL        ADDR = "imap.aol.com:993"
+	AOL_EXPORT ADDR = "export.imap.aol.com:993"
+	GMAIL      ADDR = "imap.gmail.com:993"
+	ICLOUD     ADDR = "imap.mail.me.com:993"
+	OUTLOOK    ADDR = "outlook.office365.com:993"
+	YAHOO      ADDR = "imap.mail.yahoo.com:993"
+	ZOHO       ADDR = "imap.zoho.com:993"
+)
+
+var providerIMAPAddresses = map[string]string{
+	"aol":          string(AOL),
+	"aol-export":   string(AOL_EXPORT),
+	"aolexport":    string(AOL_EXPORT),
+	"gmail":        string(GMAIL),
+	"googlemail":   string(GMAIL),
+	"hotmail":      string(OUTLOOK),
+	"icloud":       string(ICLOUD),
+	"live":         string(OUTLOOK),
+	"microsoft365": string(OUTLOOK),
+	"office365":    string(OUTLOOK),
+	"outlook":      string(OUTLOOK),
+	"yahoo":        string(YAHOO),
+	"zoho":         string(ZOHO),
+}
+
 type IMAPClient struct {
 	Address   string
 	Email     string
@@ -52,6 +80,25 @@ type mailboxSearchResult struct {
 }
 
 const maxDeletePasses = 5
+
+func resolveIMAPAddress(provider string, address string) (string, error) {
+	address = strings.TrimSpace(address)
+	if address != "" {
+		return address, nil
+	}
+
+	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
+	if normalizedProvider == "" {
+		return "", fmt.Errorf("imap address or provider is required")
+	}
+
+	resolvedAddress, ok := providerIMAPAddresses[normalizedProvider]
+	if !ok {
+		return "", fmt.Errorf("unsupported provider %q", provider)
+	}
+
+	return resolvedAddress, nil
+}
 
 func (c *IMAPClient) Login(ctx context.Context) (*IMAPSession, error) {
 	if err := c.validate(); err != nil {

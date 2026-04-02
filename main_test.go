@@ -144,7 +144,7 @@ func TestAppRunPrintsEmailsForRange(t *testing.T) {
 			Address: client.Address,
 			Email:   client.Email,
 		},
-		Login: func(context.Context) (SessionWithInboxRead, error) {
+		Login: func(context.Context, *IMAPClient) (SessionWithInboxRead, error) {
 			return client.session, nil
 		},
 		Range:   "today",
@@ -162,6 +162,9 @@ func TestAppRunPrintsEmailsForRange(t *testing.T) {
 	output := buffer.String()
 	if !strings.Contains(output, "Today message") {
 		t.Fatalf("Run() output = %q, want subject", output)
+	}
+	if !strings.Contains(output, "retrieved 1 emails") {
+		t.Fatalf("Run() output = %q, want retrieved count", output)
 	}
 	if client.session.called != "read-today" {
 		t.Fatalf("session called %q, want read-today", client.session.called)
@@ -205,7 +208,7 @@ func TestAppRunDeletePrintsEmailsAndCount(t *testing.T) {
 			Address: client.Address,
 			Email:   client.Email,
 		},
-		Login: func(context.Context) (SessionWithInboxRead, error) {
+		Login: func(context.Context, *IMAPClient) (SessionWithInboxRead, error) {
 			return client.session, nil
 		},
 		Action:  "delete",
@@ -233,6 +236,69 @@ func TestAppRunDeletePrintsEmailsAndCount(t *testing.T) {
 	}
 	if client.session.called != "delete-today" {
 		t.Fatalf("session called %q, want delete-today", client.session.called)
+	}
+}
+
+func TestAppRunMultipleAccountsPrintsGroupedOutput(t *testing.T) {
+	buffer := &bytes.Buffer{}
+	sessions := map[string]*stubSession{
+		"one@example.com": {
+			stubInboxReader: stubInboxReader{
+				emails: []EmailSummary{
+					{UID: 1, Subject: "First account message"},
+				},
+			},
+		},
+		"two@example.com": {
+			stubInboxReader: stubInboxReader{
+				emails: []EmailSummary{
+					{UID: 2, Subject: "Second account message"},
+				},
+			},
+		},
+	}
+
+	app := &App{
+		Accounts: []ConfiguredAccount{
+			{
+				Name: "gmail",
+				Client: &IMAPClient{
+					Address: "imap.gmail.com:993",
+					Email:   "one@example.com",
+				},
+			},
+			{
+				Name: "icloud",
+				Client: &IMAPClient{
+					Address: "imap.mail.me.com:993",
+					Email:   "two@example.com",
+				},
+			},
+		},
+		Login: func(_ context.Context, client *IMAPClient) (SessionWithInboxRead, error) {
+			return sessions[client.Email], nil
+		},
+		Range:   "all",
+		Timeout: time.Second,
+		Output:  buffer,
+	}
+
+	if err := app.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := buffer.String()
+	if !strings.Contains(output, "account=gmail email=one@example.com") {
+		t.Fatalf("Run() output = %q, want first account header", output)
+	}
+	if !strings.Contains(output, "account=icloud email=two@example.com") {
+		t.Fatalf("Run() output = %q, want second account header", output)
+	}
+	if strings.Count(output, "retrieved 1 emails") != 2 {
+		t.Fatalf("Run() output = %q, want two retrieved summaries", output)
+	}
+	if !sessions["one@example.com"].loggedOut || !sessions["two@example.com"].loggedOut {
+		t.Fatalf("sessions logged out = %#v", sessions)
 	}
 }
 

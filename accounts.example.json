@@ -1,0 +1,22 @@
+{
+  "accounts": [
+    {
+      "name": "gmail",
+      "email": "you@gmail.com",
+      "provider": "gmail",
+      "password_env": "MAILBIN_GMAIL_PASSWORD"
+    },
+    {
+      "name": "icloud",
+      "email": "you@icloud.com",
+      "provider": "icloud",
+      "password_env": "MAILBIN_ICLOUD_PASSWORD"
+    },
+    {
+      "name": "custom-host",
+      "email": "you@example.com",
+      "imap_addr": "imap.example.com:993",
+      "password_env": "MAILBIN_CUSTOM_PASSWORD"
+    }
+  ]
+}
