@@ -16,6 +16,7 @@ import (
 type App struct {
 	Client      *IMAPClient
 	Login       func(context.Context) (SessionWithInboxRead, error)
+	Action      string
 	Timeout     time.Duration
 	Range       string
 	Now         func() time.Time
@@ -32,6 +33,10 @@ type InboxReader interface {
 
 type SessionWithInboxRead interface {
 	InboxReader
+	DeleteInboxAll() ([]EmailSummary, error)
+	DeleteInboxToday(time.Time) ([]EmailSummary, error)
+	DeleteInboxThisWeek(time.Time) ([]EmailSummary, error)
+	DeleteInboxThisMonth(time.Time) ([]EmailSummary, error)
 	Logout() error
 }
 
@@ -63,7 +68,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	log.Printf("connected to IMAP server %s as %s", a.Client.Address, a.Client.Email)
 
-	emails, err := a.readByRange(session)
+	emails, err := a.runActionByRange(session)
 	if err != nil {
 		return err
 	}
@@ -80,6 +85,11 @@ func (a *App) Run(ctx context.Context) error {
 	if err := printEmails(output, emails); err != nil {
 		return err
 	}
+	if a.Action == "delete" {
+		if _, err := fmt.Fprintf(output, "deleted %d emails\n", len(emails)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -95,6 +105,7 @@ func main() {
 }
 
 func newAppFromFlags() (*App, error) {
+	action := flag.String("action", envOrDefault("MAILBIN_ACTION", "read"), "action to perform: read or delete")
 	address := flag.String("imap-addr", envOrDefault("MAILBIN_IMAP_ADDR", ""), "IMAP server address in host:port format")
 	email := flag.String("email", envOrDefault("MAILBIN_EMAIL", ""), "email address used for IMAP login")
 	emailRange := flag.String("range", envOrDefault("MAILBIN_RANGE", "all"), "email range to read: all, today, week, or month")
@@ -114,6 +125,7 @@ func newAppFromFlags() (*App, error) {
 
 	return &App{
 		Client:  client,
+		Action:  *action,
 		Timeout: *timeout,
 		Range:   *emailRange,
 		Now:     time.Now,
@@ -159,6 +171,17 @@ func stdinIsInteractive() bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
+func (a *App) runActionByRange(session SessionWithInboxRead) ([]EmailSummary, error) {
+	switch a.Action {
+	case "", "read":
+		return a.readByRange(session)
+	case "delete":
+		return a.deleteByRange(session)
+	default:
+		return nil, fmt.Errorf("invalid action %q: must be read or delete", a.Action)
+	}
+}
+
 func (a *App) readByRange(session InboxReader) ([]EmailSummary, error) {
 	now := time.Now
 	if a.Now != nil {
@@ -174,6 +197,26 @@ func (a *App) readByRange(session InboxReader) ([]EmailSummary, error) {
 		return session.ReadInboxThisWeek(now())
 	case "month":
 		return session.ReadInboxThisMonth(now())
+	default:
+		return nil, fmt.Errorf("invalid range %q: must be one of all, today, week, or month", a.Range)
+	}
+}
+
+func (a *App) deleteByRange(session SessionWithInboxRead) ([]EmailSummary, error) {
+	now := time.Now
+	if a.Now != nil {
+		now = a.Now
+	}
+
+	switch a.Range {
+	case "", "all":
+		return session.DeleteInboxAll()
+	case "today":
+		return session.DeleteInboxToday(now())
+	case "week":
+		return session.DeleteInboxThisWeek(now())
+	case "month":
+		return session.DeleteInboxThisMonth(now())
 	default:
 		return nil, fmt.Errorf("invalid range %q: must be one of all, today, week, or month", a.Range)
 	}

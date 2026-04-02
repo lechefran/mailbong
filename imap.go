@@ -46,6 +46,13 @@ type imapResponseLine struct {
 	literal []byte
 }
 
+type mailboxSearchResult struct {
+	mailbox   string
+	summaries []EmailSummary
+}
+
+const maxDeletePasses = 5
+
 func (c *IMAPClient) Login(ctx context.Context) (*IMAPSession, error) {
 	if err := c.validate(); err != nil {
 		return nil, err
@@ -167,17 +174,88 @@ func (s *IMAPSession) ReadInboxThisMonth(now time.Time) ([]EmailSummary, error) 
 	return s.readInboxSince(startOfDay(now.AddDate(0, 0, -30)))
 }
 
+func (s *IMAPSession) DeleteInboxAll() ([]EmailSummary, error) {
+	return s.deleteInboxByCriteria("ALL")
+}
+
+func (s *IMAPSession) DeleteInboxToday(now time.Time) ([]EmailSummary, error) {
+	return s.deleteInboxSince(startOfDay(now))
+}
+
+func (s *IMAPSession) DeleteInboxThisWeek(now time.Time) ([]EmailSummary, error) {
+	return s.deleteInboxSince(startOfDay(now.AddDate(0, 0, -7)))
+}
+
+func (s *IMAPSession) DeleteInboxThisMonth(now time.Time) ([]EmailSummary, error) {
+	return s.deleteInboxSince(startOfDay(now.AddDate(0, 0, -30)))
+}
+
 func (s *IMAPSession) readInboxSince(since time.Time) ([]EmailSummary, error) {
 	return s.readInboxByCriteria("SINCE %s", formatIMAPDate(since))
 }
 
+func (s *IMAPSession) deleteInboxSince(since time.Time) ([]EmailSummary, error) {
+	return s.deleteInboxByCriteria("SINCE %s", formatIMAPDate(since))
+}
+
 func (s *IMAPSession) readInboxByCriteria(format string, args ...any) ([]EmailSummary, error) {
+	results, err := s.searchMailboxes(format, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	return dedupeEmailSummaries(flattenMailboxResults(results)), nil
+}
+
+func (s *IMAPSession) deleteInboxByCriteria(format string, args ...any) ([]EmailSummary, error) {
+	var deletedSummaries []EmailSummary
+	var firstErr error
+
+	for pass := 0; pass < maxDeletePasses; pass++ {
+		results, err := s.searchMailboxes(format, args...)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			break
+		}
+
+		passDeletedCount := 0
+		for _, result := range results {
+			if len(result.summaries) == 0 {
+				continue
+			}
+
+			if err := s.deleteMailboxMessages(result.mailbox, result.summaries); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+
+			passDeletedCount += len(result.summaries)
+			deletedSummaries = append(deletedSummaries, result.summaries...)
+		}
+
+		if passDeletedCount == 0 {
+			break
+		}
+	}
+
+	if len(deletedSummaries) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+
+	return dedupeEmailSummaries(deletedSummaries), nil
+}
+
+func (s *IMAPSession) searchMailboxes(format string, args ...any) ([]mailboxSearchResult, error) {
 	mailboxes, err := s.listMailboxes()
 	if err != nil {
 		return nil, err
 	}
 
-	var summaries []EmailSummary
+	var results []mailboxSearchResult
 	var firstErr error
 	successfulMailboxReads := 0
 	for _, mailbox := range mailboxes {
@@ -204,14 +282,37 @@ func (s *IMAPSession) readInboxByCriteria(format string, args ...any) ([]EmailSu
 			continue
 		}
 		successfulMailboxReads++
-		summaries = append(summaries, mailboxSummaries...)
+		results = append(results, mailboxSearchResult{
+			mailbox:   mailbox,
+			summaries: mailboxSummaries,
+		})
 	}
 
 	if successfulMailboxReads == 0 && firstErr != nil {
 		return nil, firstErr
 	}
 
-	return dedupeEmailSummaries(summaries), nil
+	return results, nil
+}
+
+func (s *IMAPSession) deleteMailboxMessages(mailbox string, summaries []EmailSummary) error {
+	if len(summaries) == 0 {
+		return nil
+	}
+
+	if err := s.selectMailbox(mailbox); err != nil {
+		return err
+	}
+
+	sequenceSet := buildSequenceSet(summaries)
+	if _, _, err := s.runCommand(`STORE %s +FLAGS.SILENT (\Deleted)`, sequenceSet); err != nil {
+		return fmt.Errorf("store deleted flag for mailbox %s: %w", mailbox, err)
+	}
+	if _, _, err := s.runCommand("EXPUNGE"); err != nil {
+		return fmt.Errorf("expunge mailbox %s: %w", mailbox, err)
+	}
+
+	return nil
 }
 
 func (s *IMAPSession) listMailboxes() ([]string, error) {
@@ -624,8 +725,31 @@ func dedupeEmailSummaries(summaries []EmailSummary) []EmailSummary {
 	return deduped
 }
 
+func flattenMailboxResults(results []mailboxSearchResult) []EmailSummary {
+	total := 0
+	for _, result := range results {
+		total += len(result.summaries)
+	}
+
+	summaries := make([]EmailSummary, 0, total)
+	for _, result := range results {
+		summaries = append(summaries, result.summaries...)
+	}
+
+	return summaries
+}
+
 func normalizeMessageID(messageID string) string {
 	return strings.TrimSpace(messageID)
+}
+
+func buildSequenceSet(summaries []EmailSummary) string {
+	values := make([]string, 0, len(summaries))
+	for _, summary := range summaries {
+		values = append(values, strconv.Itoa(summary.SequenceNumber))
+	}
+
+	return strings.Join(values, ",")
 }
 
 func mailboxPriority(mailbox string) int {
