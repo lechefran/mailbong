@@ -90,6 +90,52 @@ func TestIMAPClientLoginRejectsCredentialsWithNewlines(t *testing.T) {
 	}
 }
 
+func TestIMAPClientLoginFallsBackAfterDNSLookupFailure(t *testing.T) {
+	server := newFakeIMAPServer(t, fakeIMAPServerConfig{
+		email:    "user@example.com",
+		password: "correct-password",
+		accept:   true,
+	})
+	t.Cleanup(server.Close)
+
+	_, port, err := net.SplitHostPort(server.Address())
+	if err != nil {
+		t.Fatalf("SplitHostPort(server.Address()) error = %v", err)
+	}
+
+	client := &IMAPClient{
+		Address:  net.JoinHostPort("imap.gmail.com", port),
+		Email:    "user@example.com",
+		Password: "correct-password",
+		TLSConfig: &tls.Config{
+			InsecureSkipVerify: true,
+			MinVersion:         tls.VersionTLS12,
+		},
+		DialTLSContext: func(ctx context.Context, address string, tlsConfig *tls.Config) (net.Conn, error) {
+			return nil, &net.DNSError{
+				Err:        "no such host",
+				Name:       "imap.gmail.com",
+				IsNotFound: true,
+			}
+		},
+		LookupIPAddrs: func(ctx context.Context, host string) ([]net.IPAddr, error) {
+			return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	session, err := client.Login(ctx)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+
+	if err := session.Logout(); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+}
+
 func TestIMAPSessionReadInboxViews(t *testing.T) {
 	now := time.Date(2026, time.April, 1, 15, 30, 0, 0, time.UTC)
 	server := newFakeIMAPServer(t, fakeIMAPServerConfig{
@@ -221,6 +267,7 @@ func TestIMAPSessionReadInboxViews(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := &IMAPClient{
+		Provider:  "gmail",
 		Address:   server.Address(),
 		Email:     "user@example.com",
 		Password:  "correct-password",
@@ -318,6 +365,63 @@ func TestIMAPSessionReadInboxViews(t *testing.T) {
 	}
 }
 
+func TestMailboxPriorityTargetsArchive(t *testing.T) {
+	if archivePriority := mailboxPriority("Archive"); archivePriority != 1 {
+		t.Fatalf("mailboxPriority(Archive) = %d, want 1", archivePriority)
+	}
+	if inboxPriority := mailboxPriority("INBOX"); inboxPriority >= mailboxPriority("Archive") {
+		t.Fatalf("mailboxPriority(INBOX) = %d, want higher priority than Archive", inboxPriority)
+	}
+	if archivePriority := mailboxPriority("Archive"); archivePriority >= mailboxPriority("[Gmail]/Trash") {
+		t.Fatalf("mailboxPriority(Archive) = %d, want higher priority than Trash", archivePriority)
+	}
+	if archivePriority := mailboxPriority("Archive"); archivePriority >= mailboxPriority("[Gmail]/All Mail") {
+		t.Fatalf("mailboxPriority(Archive) = %d, want higher priority than All Mail", archivePriority)
+	}
+}
+
+func TestPrioritizeDeleteMailboxesTargetsAllMailFirst(t *testing.T) {
+	mailboxes := []string{
+		"[Gmail]/Trash",
+		"INBOX",
+		"Archive",
+		"[Gmail]/All Mail",
+	}
+
+	prioritized := prioritizeDeleteMailboxes(mailboxes, true)
+	want := []string{
+		"[Gmail]/All Mail",
+		"INBOX",
+		"Archive",
+		"[Gmail]/Trash",
+	}
+
+	if !slices.Equal(prioritized, want) {
+		t.Fatalf("prioritizeDeleteMailboxes() = %v, want %v", prioritized, want)
+	}
+}
+
+func TestPrioritizeDeleteMailboxesLeavesAllMailInNormalOrderForNonGmail(t *testing.T) {
+	mailboxes := []string{
+		"[Gmail]/Trash",
+		"INBOX",
+		"Archive",
+		"[Gmail]/All Mail",
+	}
+
+	prioritized := prioritizeDeleteMailboxes(mailboxes, false)
+	want := []string{
+		"INBOX",
+		"Archive",
+		"[Gmail]/Trash",
+		"[Gmail]/All Mail",
+	}
+
+	if !slices.Equal(prioritized, want) {
+		t.Fatalf("prioritizeDeleteMailboxes() = %v, want %v", prioritized, want)
+	}
+}
+
 func TestIMAPSessionReadInboxAllHonorsDeadline(t *testing.T) {
 	server := newFakeIMAPServer(t, fakeIMAPServerConfig{
 		email:     "user@example.com",
@@ -328,6 +432,7 @@ func TestIMAPSessionReadInboxAllHonorsDeadline(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := &IMAPClient{
+		Provider:  "gmail",
 		Address:   server.Address(),
 		Email:     "user@example.com",
 		Password:  "correct-password",
@@ -382,6 +487,7 @@ func TestIMAPSessionReadInboxAllResetsDeadlinePerCommand(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := &IMAPClient{
+		Provider:  "gmail",
 		Address:   server.Address(),
 		Email:     "user@example.com",
 		Password:  "correct-password",
@@ -446,13 +552,14 @@ func TestIMAPSessionReadInboxAllReturnsPartialResultsAfterMailboxTimeout(t *test
 	t.Cleanup(server.Close)
 
 	client := &IMAPClient{
+		Provider:  "gmail",
 		Address:   server.Address(),
 		Email:     "user@example.com",
 		Password:  "correct-password",
 		TLSConfig: server.ClientTLSConfig(),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
 
 	session, err := client.Login(ctx)
@@ -668,7 +775,7 @@ func TestIMAPSessionDeleteInboxOlderThanDays(t *testing.T) {
 	}
 }
 
-func TestIMAPSessionDeleteInboxOlderThanDaysIncludesFlaggedWhenRequested(t *testing.T) {
+func TestIMAPSessionDeleteInboxOlderThanDaysSkipsFlaggedEvenWhenRequested(t *testing.T) {
 	now := time.Date(2026, time.April, 2, 15, 30, 0, 0, time.UTC)
 	server := newFakeIMAPServer(t, fakeIMAPServerConfig{
 		email:    "user@example.com",
@@ -713,11 +820,307 @@ func TestIMAPSessionDeleteInboxOlderThanDaysIncludesFlaggedWhenRequested(t *test
 	if err != nil {
 		t.Fatalf("DeleteInboxOlderThanDays() error = %v", err)
 	}
-	if len(deletedEmails) != 1 {
-		t.Fatalf("DeleteInboxOlderThanDays() deleted = %v, want 1 flagged email", deletedEmails)
+	if len(deletedEmails) != 0 {
+		t.Fatalf("DeleteInboxOlderThanDays() deleted = %v, want no flagged emails deleted", deletedEmails)
 	}
-	if deletedEmails[0].Subject != "Flagged old message" {
-		t.Fatalf("DeleteInboxOlderThanDays() subject = %q, want flagged email", deletedEmails[0].Subject)
+
+	remainingEmails, err := session.ReadInboxAll()
+	if err != nil {
+		t.Fatalf("ReadInboxAll() error = %v", err)
+	}
+	if len(remainingEmails) != 1 {
+		t.Fatalf("ReadInboxAll() emails = %v, want 1 flagged email remaining", remainingEmails)
+	}
+	if remainingEmails[0].Subject != "Flagged old message" {
+		t.Fatalf("remaining subject = %q, want flagged email", remainingEmails[0].Subject)
+	}
+}
+
+func TestIMAPSessionDeleteInboxOlderThanDaysGmailAllMailUsesPerEmailDelete(t *testing.T) {
+	now := time.Date(2026, time.April, 2, 15, 30, 0, 0, time.UTC)
+	server := newFakeIMAPServer(t, fakeIMAPServerConfig{
+		email:    "user@example.com",
+		password: "correct-password",
+		accept:   true,
+		mailboxes: []fakeIMAPMailbox{
+			{
+				Name: "INBOX",
+				Messages: []fakeIMAPMessage{
+					{
+						UID:        101,
+						MessageID:  "<inbox-old@example.com>",
+						ReceivedAt: time.Date(2026, time.January, 1, 8, 0, 0, 0, time.UTC),
+						Subject:    "Inbox old message",
+						From:       "alerts@example.com",
+						To:         "user@example.com",
+					},
+				},
+			},
+			{
+				Name: "[Gmail]/All Mail",
+				Messages: []fakeIMAPMessage{
+					{
+						UID:        201,
+						MessageID:  "<allmail-old@example.com>",
+						ReceivedAt: time.Date(2025, time.December, 1, 8, 0, 0, 0, time.UTC),
+						Subject:    "All Mail old message",
+						From:       "allmail@example.com",
+						To:         "user@example.com",
+					},
+				},
+			},
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := &IMAPClient{
+		Provider:  "gmail",
+		Address:   server.Address(),
+		Email:     "user@example.com",
+		Password:  "correct-password",
+		TLSConfig: server.ClientTLSConfig(),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	session, err := client.Login(ctx)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	defer session.Logout()
+
+	deletedEmails, err := session.DeleteInboxOlderThanDays(now, 90, false)
+	if err != nil {
+		t.Fatalf("DeleteInboxOlderThanDays() error = %v", err)
+	}
+
+	deletedSubjects := make([]string, 0, len(deletedEmails))
+	for _, email := range deletedEmails {
+		deletedSubjects = append(deletedSubjects, email.Subject)
+	}
+	wantDeletedSubjects := []string{
+		"All Mail old message",
+		"Inbox old message",
+	}
+	if !slices.Equal(deletedSubjects, wantDeletedSubjects) {
+		t.Fatalf("DeleteInboxOlderThanDays() subjects = %v, want %v", deletedSubjects, wantDeletedSubjects)
+	}
+}
+
+func TestIMAPSessionDeleteInboxOlderThanDaysDeletesEachMessageIndividually(t *testing.T) {
+	now := time.Date(2026, time.April, 2, 15, 30, 0, 0, time.UTC)
+	server := newFakeIMAPServer(t, fakeIMAPServerConfig{
+		email:    "user@example.com",
+		password: "correct-password",
+		accept:   true,
+		mailboxes: []fakeIMAPMailbox{
+			{
+				Name: "INBOX",
+				Messages: []fakeIMAPMessage{
+					{
+						UID:        101,
+						MessageID:  "<old-one@example.com>",
+						ReceivedAt: time.Date(2025, time.December, 1, 8, 0, 0, 0, time.UTC),
+						Subject:    "Old one",
+						From:       "one@example.com",
+						To:         "user@example.com",
+					},
+					{
+						UID:        102,
+						MessageID:  "<old-two@example.com>",
+						ReceivedAt: time.Date(2025, time.December, 2, 8, 0, 0, 0, time.UTC),
+						Subject:    "Old two",
+						From:       "two@example.com",
+						To:         "user@example.com",
+					},
+					{
+						UID:        103,
+						MessageID:  "<old-three@example.com>",
+						ReceivedAt: time.Date(2025, time.December, 3, 8, 0, 0, 0, time.UTC),
+						Subject:    "Old three",
+						From:       "three@example.com",
+						To:         "user@example.com",
+					},
+				},
+			},
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := &IMAPClient{
+		Address:   server.Address(),
+		Email:     "user@example.com",
+		Password:  "correct-password",
+		TLSConfig: server.ClientTLSConfig(),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	session, err := client.Login(ctx)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	defer session.Logout()
+
+	deletedEmails, err := session.DeleteInboxOlderThanDays(now, 90, false)
+	if err != nil {
+		t.Fatalf("DeleteInboxOlderThanDays() error = %v", err)
+	}
+	if len(deletedEmails) != 3 {
+		t.Fatalf("DeleteInboxOlderThanDays() deleted = %v, want 3 emails", deletedEmails)
+	}
+	deletedSubjects := make([]string, 0, len(deletedEmails))
+	for _, email := range deletedEmails {
+		deletedSubjects = append(deletedSubjects, email.Subject)
+	}
+	wantDeletedSubjects := []string{"Old one", "Old two", "Old three"}
+	if !slices.Equal(deletedSubjects, wantDeletedSubjects) {
+		t.Fatalf("DeleteInboxOlderThanDays() subjects = %v, want %v", deletedSubjects, wantDeletedSubjects)
+	}
+
+	remainingEmails, err := session.ReadInboxAll()
+	if err != nil {
+		t.Fatalf("ReadInboxAll() error = %v", err)
+	}
+	if len(remainingEmails) != 0 {
+		t.Fatalf("remaining emails = %v, want none", remainingEmails)
+	}
+}
+
+func TestIMAPSessionDeleteInboxOlderThanDaysSkipsStoreFailures(t *testing.T) {
+	now := time.Date(2026, time.April, 2, 15, 30, 0, 0, time.UTC)
+	server := newFakeIMAPServer(t, fakeIMAPServerConfig{
+		email:    "user@example.com",
+		password: "correct-password",
+		accept:   true,
+		mailboxes: []fakeIMAPMailbox{
+			{
+				Name:      "Apparel",
+				FailStore: true,
+				Messages: []fakeIMAPMessage{
+					{
+						UID:        101,
+						MessageID:  "<apparel-one@example.com>",
+						ReceivedAt: time.Date(2025, time.December, 1, 8, 0, 0, 0, time.UTC),
+						Subject:    "Apparel one",
+						From:       "one@example.com",
+						To:         "user@example.com",
+					},
+					{
+						UID:        102,
+						MessageID:  "<apparel-two@example.com>",
+						ReceivedAt: time.Date(2025, time.December, 2, 8, 0, 0, 0, time.UTC),
+						Subject:    "Apparel two",
+						From:       "two@example.com",
+						To:         "user@example.com",
+					},
+				},
+			},
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := &IMAPClient{
+		Address:   server.Address(),
+		Email:     "user@example.com",
+		Password:  "correct-password",
+		TLSConfig: server.ClientTLSConfig(),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	session, err := client.Login(ctx)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	defer session.Logout()
+
+	deletedEmails, err := session.DeleteInboxOlderThanDays(now, 90, false)
+	if err != nil {
+		t.Fatalf("DeleteInboxOlderThanDays() error = %v", err)
+	}
+	if len(deletedEmails) != 0 {
+		t.Fatalf("DeleteInboxOlderThanDays() deleted = %v, want no emails deleted on store failures", deletedEmails)
+	}
+
+	remainingEmails, err := session.ReadInboxAll()
+	if err != nil {
+		t.Fatalf("ReadInboxAll() error = %v", err)
+	}
+	if len(remainingEmails) != 2 {
+		t.Fatalf("remaining emails = %v, want both emails retained", remainingEmails)
+	}
+}
+
+func TestIMAPSessionDeleteInboxOlderThanDaysRecoversAfterAllMailStoreTimeout(t *testing.T) {
+	now := time.Date(2026, time.April, 2, 15, 30, 0, 0, time.UTC)
+	server := newFakeIMAPServer(t, fakeIMAPServerConfig{
+		email:    "user@example.com",
+		password: "correct-password",
+		accept:   true,
+		mailboxes: []fakeIMAPMailbox{
+			{
+				Name:               "[Gmail]/All Mail",
+				StallStore:         100 * time.Millisecond,
+				StallStoreFirstOps: 1,
+				Messages: []fakeIMAPMessage{
+					{
+						UID:        101,
+						MessageID:  "<allmail-one@example.com>",
+						ReceivedAt: time.Date(2025, time.December, 1, 8, 0, 0, 0, time.UTC),
+						Subject:    "All Mail one",
+						From:       "one@example.com",
+						To:         "user@example.com",
+					},
+					{
+						UID:        102,
+						MessageID:  "<allmail-two@example.com>",
+						ReceivedAt: time.Date(2025, time.December, 2, 8, 0, 0, 0, time.UTC),
+						Subject:    "All Mail two",
+						From:       "two@example.com",
+						To:         "user@example.com",
+					},
+				},
+			},
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := &IMAPClient{
+		Provider:  "gmail",
+		Address:   server.Address(),
+		Email:     "user@example.com",
+		Password:  "correct-password",
+		TLSConfig: server.ClientTLSConfig(),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	session, err := client.Login(ctx)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	defer session.Logout()
+	session.commandTimeout = 50 * time.Millisecond
+
+	deletedEmails, err := session.DeleteInboxOlderThanDays(now, 90, false)
+	if err != nil {
+		t.Fatalf("DeleteInboxOlderThanDays() error = %v", err)
+	}
+	if len(deletedEmails) != 2 {
+		t.Fatalf("DeleteInboxOlderThanDays() deleted = %v, want both all mail emails deleted", deletedEmails)
+	}
+
+	remainingEmails, err := session.ReadInboxAll()
+	if err != nil {
+		t.Fatalf("ReadInboxAll() error = %v", err)
+	}
+	if len(remainingEmails) != 0 {
+		t.Fatalf("remaining emails = %v, want none", remainingEmails)
 	}
 }
 
@@ -846,8 +1249,8 @@ func TestIMAPSessionDeleteInboxOlderThanDaysSkipsTimedOutMailboxDeletes(t *testi
 		t.Fatalf("DeleteInboxOlderThanDays() error = %v", err)
 	}
 
-	if len(deletedEmails) != 1 {
-		t.Fatalf("DeleteInboxOlderThanDays() deleted = %v, want 1 inbox email", deletedEmails)
+	if len(deletedEmails) != 2 {
+		t.Fatalf("DeleteInboxOlderThanDays() deleted = %v, want 2 deleted emails", deletedEmails)
 	}
 	if deletedEmails[0].Subject != "Old inbox message" {
 		t.Fatalf("DeleteInboxOlderThanDays() subject = %q, want inbox email", deletedEmails[0].Subject)
@@ -932,6 +1335,7 @@ type fakeIMAPServer struct {
 	stallList    time.Duration
 	stallSearch  time.Duration
 	selectCounts map[string]int
+	storeCounts  map[string]int
 }
 
 type fakeIMAPServerConfig struct {
@@ -950,9 +1354,14 @@ type fakeIMAPMailbox struct {
 	FailSelect            bool
 	FailSearch            bool
 	FailFetch             bool
+	FailStore             bool
+	RequireMinimalFetch   bool
 	DeleteMovesTo         string
 	StallSelect           time.Duration
 	StallAfterSelectCount int
+	StallStore            time.Duration
+	StallStoreFirstOps    int
+	StallStoreMinCount    int
 	MaxFetchSequenceCount int
 	Messages              []fakeIMAPMessage
 }
@@ -994,6 +1403,7 @@ func newFakeIMAPServer(t *testing.T, config fakeIMAPServerConfig) *fakeIMAPServe
 		stallList:    config.stallList,
 		stallSearch:  config.stallSearch,
 		selectCounts: make(map[string]int),
+		storeCounts:  make(map[string]int),
 	}
 
 	go server.serve(t)
@@ -1157,6 +1567,71 @@ func (s *fakeIMAPServer) handleConn(t *testing.T, conn net.Conn) {
 				t.Logf("STORE OK response error = %v", err)
 				return
 			}
+		case "UID":
+			uidParts := strings.SplitN(strings.TrimSpace(args), " ", 2)
+			if len(uidParts) != 2 {
+				if _, err := fmt.Fprintf(writer, "%s BAD unsupported UID command\r\n", tag); err != nil {
+					t.Logf("UID BAD response error = %v", err)
+					return
+				}
+				break
+			}
+			subCommand := strings.ToUpper(uidParts[0])
+			switch subCommand {
+			case "SEARCH":
+				uids, err := s.searchMessageUIDs(s.selected, uidParts[1])
+				if err != nil {
+					if _, writeErr := fmt.Fprintf(writer, "%s NO %s\r\n", tag, err); writeErr != nil {
+						t.Logf("UID SEARCH NO response error = %v", writeErr)
+						return
+					}
+					break
+				}
+
+				if len(uids) == 0 {
+					if _, err := writer.WriteString("* SEARCH\r\n"); err != nil {
+						t.Logf("UID SEARCH empty response error = %v", err)
+						return
+					}
+				} else {
+					values := make([]string, 0, len(uids))
+					for _, uid := range uids {
+						values = append(values, strconv.FormatUint(uint64(uid), 10))
+					}
+					if _, err := fmt.Fprintf(writer, "* SEARCH %s\r\n", strings.Join(values, " ")); err != nil {
+						t.Logf("UID SEARCH response error = %v", err)
+						return
+					}
+				}
+				if _, err := fmt.Fprintf(writer, "%s OK UID SEARCH completed\r\n", tag); err != nil {
+					t.Logf("UID SEARCH OK response error = %v", err)
+					return
+				}
+			case "FETCH":
+				if err := s.writeUIDFetchResponse(writer, tag, s.selected, uidParts[1]); err != nil {
+					if _, writeErr := fmt.Fprintf(writer, "%s NO %s\r\n", tag, err); writeErr != nil {
+						t.Logf("UID FETCH NO response error = %v", writeErr)
+						return
+					}
+				}
+			case "STORE":
+				if err := s.storeDeletedFlagsByUID(s.selected, uidParts[1]); err != nil {
+					if _, writeErr := fmt.Fprintf(writer, "%s NO %s\r\n", tag, err); writeErr != nil {
+						t.Logf("UID STORE NO response error = %v", writeErr)
+						return
+					}
+					break
+				}
+				if _, err := fmt.Fprintf(writer, "%s OK UID STORE completed\r\n", tag); err != nil {
+					t.Logf("UID STORE OK response error = %v", err)
+					return
+				}
+			default:
+				if _, err := fmt.Fprintf(writer, "%s BAD unsupported UID command\r\n", tag); err != nil {
+					t.Logf("UID BAD response error = %v", err)
+					return
+				}
+			}
 		case "EXPUNGE":
 			if err := s.expungeMailbox(s.selected); err != nil {
 				if _, writeErr := fmt.Fprintf(writer, "%s NO %s\r\n", tag, err); writeErr != nil {
@@ -1319,6 +1794,28 @@ func (s *fakeIMAPServer) searchMessages(mailboxName, criteria string) ([]int, er
 	return sequenceNumbers, nil
 }
 
+func (s *fakeIMAPServer) searchMessageUIDs(mailboxName, criteria string) ([]uint32, error) {
+	sequenceNumbers, err := s.searchMessages(mailboxName, criteria)
+	if err != nil {
+		return nil, err
+	}
+
+	mailbox, ok := s.findMailbox([]string{mailboxName})
+	if !ok {
+		return nil, fmt.Errorf("no selected mailbox")
+	}
+
+	uids := make([]uint32, 0, len(sequenceNumbers))
+	for _, sequenceNumber := range sequenceNumbers {
+		if sequenceNumber <= 0 || sequenceNumber > len(mailbox.Messages) {
+			return nil, fmt.Errorf("sequence number %d out of range", sequenceNumber)
+		}
+		uids = append(uids, mailbox.Messages[sequenceNumber-1].UID)
+	}
+
+	return uids, nil
+}
+
 func (s *fakeIMAPServer) writeFetchResponse(writer *bufio.Writer, tag, mailboxName, args string) error {
 	mailbox, ok := s.findMailbox([]string{mailboxName})
 	if !ok {
@@ -1331,6 +1828,9 @@ func (s *fakeIMAPServer) writeFetchResponse(writer *bufio.Writer, tag, mailboxNa
 	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
 	if len(parts) != 2 {
 		return fmt.Errorf("invalid FETCH args: %s", args)
+	}
+	if mailbox.RequireMinimalFetch && strings.Contains(parts[1], "INTERNALDATE") {
+		return fmt.Errorf("mailbox %s requires minimal fetch", mailbox.Name)
 	}
 
 	sequenceNumbers, err := parseSequenceSet(parts[0])
@@ -1383,10 +1883,76 @@ func (s *fakeIMAPServer) writeFetchResponse(writer *bufio.Writer, tag, mailboxNa
 	return nil
 }
 
+func (s *fakeIMAPServer) writeUIDFetchResponse(writer *bufio.Writer, tag, mailboxName, args string) error {
+	mailbox, ok := s.findMailbox([]string{mailboxName})
+	if !ok {
+		return fmt.Errorf("no selected mailbox")
+	}
+	if mailbox.FailFetch {
+		return fmt.Errorf("fetch failed for mailbox %s", mailbox.Name)
+	}
+
+	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid UID FETCH args: %s", args)
+	}
+
+	uids, err := parseUIDSet(parts[0])
+	if err != nil {
+		return err
+	}
+
+	for _, uid := range uids {
+		sequenceNumber, found := findSequenceNumberByUID(mailbox.Messages, uid)
+		if !found {
+			return fmt.Errorf("uid %d out of range", uid)
+		}
+
+		message := mailbox.Messages[sequenceNumber-1]
+		if message.Deleted {
+			continue
+		}
+
+		headers := fmt.Sprintf(
+			"Message-ID: %s\r\nSubject: %s\r\nFrom: %s\r\nTo: %s\r\n\r\n",
+			message.MessageID,
+			message.Subject,
+			message.From,
+			message.To,
+		)
+
+		if _, err := fmt.Fprintf(
+			writer,
+			"* %d FETCH (UID %d INTERNALDATE %q BODY[HEADER.FIELDS (MESSAGE-ID SUBJECT FROM TO)] {%d}\r\n",
+			sequenceNumber,
+			message.UID,
+			message.ReceivedAt.Format("02-Jan-2006 15:04:05 -0700"),
+			len(headers),
+		); err != nil {
+			return err
+		}
+		if _, err := writer.WriteString(headers); err != nil {
+			return err
+		}
+		if _, err := writer.WriteString(")\r\n"); err != nil {
+			return err
+		}
+	}
+
+	if _, err := fmt.Fprintf(writer, "%s OK UID FETCH completed\r\n", tag); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (s *fakeIMAPServer) storeDeletedFlags(mailboxName, args string) error {
 	mailbox, ok := s.findMailbox([]string{mailboxName})
 	if !ok {
 		return fmt.Errorf("no selected mailbox")
+	}
+	if mailbox.FailStore {
+		return fmt.Errorf("store failed for mailbox %s", mailbox.Name)
 	}
 
 	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
@@ -1402,12 +1968,66 @@ func (s *fakeIMAPServer) storeDeletedFlags(mailboxName, args string) error {
 	if err != nil {
 		return err
 	}
+	s.storeCounts[mailbox.Name]++
+	if mailbox.StallStore > 0 {
+		if mailbox.StallStoreFirstOps > 0 {
+			if s.storeCounts[mailbox.Name] <= mailbox.StallStoreFirstOps {
+				time.Sleep(mailbox.StallStore)
+			}
+		} else if len(sequenceNumbers) >= mailbox.StallStoreMinCount {
+			time.Sleep(mailbox.StallStore)
+		}
+	}
 
 	for _, sequenceNumber := range sequenceNumbers {
 		if sequenceNumber <= 0 || sequenceNumber > len(mailbox.Messages) {
 			return fmt.Errorf("sequence number %d out of range", sequenceNumber)
 		}
 
+		mailbox.Messages[sequenceNumber-1].Deleted = true
+	}
+
+	return nil
+}
+
+func (s *fakeIMAPServer) storeDeletedFlagsByUID(mailboxName, args string) error {
+	mailbox, ok := s.findMailbox([]string{mailboxName})
+	if !ok {
+		return fmt.Errorf("no selected mailbox")
+	}
+	if mailbox.FailStore {
+		return fmt.Errorf("store failed for mailbox %s", mailbox.Name)
+	}
+
+	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid UID STORE args: %s", args)
+	}
+
+	if !strings.Contains(parts[1], `\Deleted`) {
+		return fmt.Errorf("unsupported UID STORE flags: %s", args)
+	}
+
+	uids, err := parseUIDSet(parts[0])
+	if err != nil {
+		return err
+	}
+	s.storeCounts[mailbox.Name]++
+	if mailbox.StallStore > 0 {
+		if mailbox.StallStoreFirstOps > 0 {
+			if s.storeCounts[mailbox.Name] <= mailbox.StallStoreFirstOps {
+				time.Sleep(mailbox.StallStore)
+			}
+		} else if len(uids) >= mailbox.StallStoreMinCount {
+			time.Sleep(mailbox.StallStore)
+		}
+	}
+
+	for _, uid := range uids {
+		sequenceNumber, found := findSequenceNumberByUID(mailbox.Messages, uid)
+		if !found {
+			return fmt.Errorf("uid %d out of range", uid)
+		}
 		mailbox.Messages[sequenceNumber-1].Deleted = true
 	}
 
@@ -1458,6 +2078,30 @@ func parseSequenceSet(value string) ([]int, error) {
 	}
 
 	return sequenceNumbers, nil
+}
+
+func parseUIDSet(value string) ([]uint32, error) {
+	parts := strings.Split(value, ",")
+	uids := make([]uint32, 0, len(parts))
+	for _, part := range parts {
+		uid, err := strconv.ParseUint(part, 10, 32)
+		if err != nil {
+			return nil, err
+		}
+		uids = append(uids, uint32(uid))
+	}
+
+	return uids, nil
+}
+
+func findSequenceNumberByUID(messages []fakeIMAPMessage, uid uint32) (int, bool) {
+	for index, message := range messages {
+		if message.UID == uid {
+			return index + 1, true
+		}
+	}
+
+	return 0, false
 }
 
 func parseIMAPCommand(line string) (string, string, string, error) {

@@ -85,28 +85,17 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	results := make(chan accountRunResult, len(accounts))
-	concurrency := a.Concurrency
-	if concurrency <= 0 || concurrency > len(accounts) {
-		concurrency = len(accounts)
-	}
-	if concurrency > 4 {
-		concurrency = 4
-	}
-	limiter := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	for _, account := range accounts {
-		account := account
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			limiter <- struct{}{}
-			defer func() {
-				<-limiter
-			}()
 
 			runCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
+			actionName := normalizedAction(a.Action)
 
+			log.Printf("starting account %s action=%s", account.Name, actionName)
 			session, err := login(runCtx, account.Client)
 			if err != nil {
 				results <- accountRunResult{
@@ -139,6 +128,12 @@ func (a *App) Run(ctx context.Context) error {
 					err:         logoutErr,
 				}
 				return
+			}
+
+			if actionName == "delete" {
+				log.Printf("finished deletion for account %s: deleted %d emails", account.Name, len(emails))
+			} else {
+				log.Printf("completed account %s action=%s emails=%d", account.Name, actionName, len(emails))
 			}
 
 			if len(accounts) > 1 {
@@ -179,6 +174,9 @@ func (a *App) Run(ctx context.Context) error {
 	if err := writeActionSummary(output, a.Action, len(allEmails)); err != nil {
 		return err
 	}
+	if err := writeCrossAccountSummary(output, a.Action, len(accounts), len(failures), len(allEmails)); err != nil {
+		return err
+	}
 
 	if len(failures) > 0 {
 		return fmt.Errorf("%d account(s) failed: %s", len(failures), strings.Join(failures, "; "))
@@ -214,7 +212,7 @@ func newAppFromFlags() (*App, error) {
 	includeFlagged := flag.Bool(
 		"include-flagged",
 		envBoolOrDefault("MAILBIN_INCLUDE_FLAGGED", false),
-		"include flagged/starred emails in delete action",
+		"deprecated: flagged/starred emails are never deleted",
 	)
 	timeout := flag.Duration("timeout", 15*time.Second, "connection timeout")
 	flag.Parse()
@@ -234,6 +232,7 @@ func newAppFromFlags() (*App, error) {
 		}
 
 		client := &IMAPClient{
+			Provider: *provider,
 			Address:  addressValue,
 			Email:    *email,
 			Password: password,
@@ -355,15 +354,31 @@ func writeEmailSummaries(output io.Writer, emails []EmailSummary) error {
 		if email.Account != "" {
 			accountPrefix = fmt.Sprintf("account=%s | ", email.Account)
 		}
+		receivedAt := "unknown-time"
+		if !email.ReceivedAt.IsZero() {
+			receivedAt = email.ReceivedAt.Format(time.RFC3339)
+		}
+		subject := email.Subject
+		if subject == "" {
+			subject = "-"
+		}
+		from := email.From
+		if from == "" {
+			from = "-"
+		}
+		to := email.To
+		if to == "" {
+			to = "-"
+		}
 		if _, err := fmt.Fprintf(
 			output,
 			"%s | %smailbox=%s | %s | from=%s | to=%s | uid=%d\n",
-			email.ReceivedAt.Format(time.RFC3339),
+			receivedAt,
 			accountPrefix,
 			email.Mailbox,
-			email.Subject,
-			email.From,
-			email.To,
+			subject,
+			from,
+			to,
 			email.UID,
 		); err != nil {
 			return err
@@ -386,12 +401,48 @@ func writeActionSummary(output io.Writer, action string, count int) error {
 	}
 }
 
+func writeCrossAccountSummary(output io.Writer, action string, totalAccounts, failedAccounts, totalEmails int) error {
+	successfulAccounts := totalAccounts - failedAccounts
+	switch action {
+	case "", "read":
+		_, err := fmt.Fprintf(
+			output,
+			"summary: read total=%d emails across accounts=%d (successful=%d failed=%d)\n",
+			totalEmails,
+			totalAccounts,
+			successfulAccounts,
+			failedAccounts,
+		)
+		return err
+	case "delete":
+		_, err := fmt.Fprintf(
+			output,
+			"summary: deleted total=%d emails across accounts=%d (successful=%d failed=%d)\n",
+			totalEmails,
+			totalAccounts,
+			successfulAccounts,
+			failedAccounts,
+		)
+		return err
+	default:
+		return fmt.Errorf("invalid action %q: must be read or delete", action)
+	}
+}
+
 func defaultAccountName(email string) string {
 	if email == "" {
 		return "account"
 	}
 
 	return email
+}
+
+func normalizedAction(action string) string {
+	if action == "" {
+		return "read"
+	}
+
+	return action
 }
 
 func envOrDefault(key, fallback string) string {

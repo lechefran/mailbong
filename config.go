@@ -59,6 +59,7 @@ func loadConfiguredAccounts(
 		accounts = append(accounts, ConfiguredAccount{
 			Name: name,
 			Client: &IMAPClient{
+				Provider: strings.TrimSpace(configured.Provider),
 				Address:  address,
 				Email:    strings.TrimSpace(configured.Email),
 				Password: password,

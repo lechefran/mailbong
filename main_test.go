@@ -318,6 +318,9 @@ func TestAppRunMultipleAccountsAggregatesOutput(t *testing.T) {
 	if strings.Count(output, "retrieved 2 emails") != 1 {
 		t.Fatalf("Run() output = %q, want one aggregated summary", output)
 	}
+	if !strings.Contains(output, "summary: read total=2 emails across accounts=2 (successful=2 failed=0)") {
+		t.Fatalf("Run() output = %q, want cross-account read summary", output)
+	}
 	if !sessions["one@example.com"].loggedOut || !sessions["two@example.com"].loggedOut {
 		t.Fatalf("sessions logged out = %#v", sessions)
 	}
@@ -392,6 +395,81 @@ func TestAppRunDeleteMultipleAccountsRunsConcurrentlyAndAggregatesCount(t *testi
 	}
 	if !strings.Contains(output, "deleted 2 emails") {
 		t.Fatalf("Run() output = %q, want aggregated deleted count", output)
+	}
+	if !strings.Contains(output, "summary: deleted total=2 emails across accounts=2 (successful=2 failed=0)") {
+		t.Fatalf("Run() output = %q, want cross-account delete summary", output)
+	}
+}
+
+func TestAppRunReadMultipleAccountsRunsConcurrentlyAndAggregatesCount(t *testing.T) {
+	buffer := &bytes.Buffer{}
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	errs := make(chan error, 1)
+
+	app := &App{
+		Accounts: []ConfiguredAccount{
+			{
+				Name: "gmail",
+				Client: &IMAPClient{
+					Address: "imap.gmail.com:993",
+					Email:   "one@example.com",
+				},
+			},
+			{
+				Name: "icloud",
+				Client: &IMAPClient{
+					Address: "imap.mail.me.com:993",
+					Email:   "two@example.com",
+				},
+			},
+		},
+		Login: func(_ context.Context, client *IMAPClient) (SessionWithInboxRead, error) {
+			return &blockingReadSession{
+				email:   client.Email,
+				started: started,
+				release: release,
+				emails: []EmailSummary{
+					{
+						UID:     1,
+						Mailbox: "INBOX",
+						Subject: client.Email,
+					},
+				},
+			}, nil
+		},
+		Range:   "all",
+		Timeout: time.Second,
+		Output:  buffer,
+	}
+
+	go func() {
+		errs <- app.Run(context.Background())
+	}()
+
+	first := <-started
+	second := <-started
+	if first == second {
+		t.Fatalf("started accounts = %q and %q, want distinct concurrent reads", first, second)
+	}
+	close(release)
+
+	if err := <-errs; err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	output := buffer.String()
+	if !strings.Contains(output, "account=gmail |") {
+		t.Fatalf("Run() output = %q, want gmail account label", output)
+	}
+	if !strings.Contains(output, "account=icloud |") {
+		t.Fatalf("Run() output = %q, want icloud account label", output)
+	}
+	if !strings.Contains(output, "retrieved 2 emails") {
+		t.Fatalf("Run() output = %q, want aggregated retrieved count", output)
+	}
+	if !strings.Contains(output, "summary: read total=2 emails across accounts=2 (successful=2 failed=0)") {
+		t.Fatalf("Run() output = %q, want cross-account read summary", output)
 	}
 }
 
@@ -631,6 +709,41 @@ func (s *blockingDeleteSession) DeleteInboxOlderThanDays(time.Time, int, bool) (
 }
 
 func (s *blockingDeleteSession) Logout() error {
+	s.loggedOut = true
+	return nil
+}
+
+type blockingReadSession struct {
+	email     string
+	started   chan<- string
+	release   <-chan struct{}
+	emails    []EmailSummary
+	loggedOut bool
+}
+
+func (s *blockingReadSession) ReadInboxAll() ([]EmailSummary, error) {
+	s.started <- s.email
+	<-s.release
+	return s.emails, nil
+}
+
+func (s *blockingReadSession) ReadInboxToday(time.Time) ([]EmailSummary, error) {
+	return nil, nil
+}
+
+func (s *blockingReadSession) ReadInboxThisWeek(time.Time) ([]EmailSummary, error) {
+	return nil, nil
+}
+
+func (s *blockingReadSession) ReadInboxThisMonth(time.Time) ([]EmailSummary, error) {
+	return nil, nil
+}
+
+func (s *blockingReadSession) DeleteInboxOlderThanDays(time.Time, int, bool) ([]EmailSummary, error) {
+	return nil, nil
+}
+
+func (s *blockingReadSession) Logout() error {
 	s.loggedOut = true
 	return nil
 }
