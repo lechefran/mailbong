@@ -19,6 +19,8 @@ import (
 )
 
 const (
+	gmailTrashMailbox = "[Gmail]/Trash"
+
 	imapAddressAOL       = "imap.aol.com:993"
 	imapAddressAOLExport = "export.imap.aol.com:993"
 	imapAddressGmail     = "imap.gmail.com:993"
@@ -33,8 +35,8 @@ const (
 	maxFetchRetryAttempts    = 3
 	maxStoreRetryAttempts    = 3
 	maxExpungeRetryAttempts  = 3
-	defaultFetchBatchSize    = 10
-	defaultDeleteBatchSize   = 10
+	defaultFetchBatchSize    = 20
+	defaultDeleteBatchSize   = 20
 )
 
 type ADDR string
@@ -91,6 +93,7 @@ type EmailSummary struct {
 	MessageID      string
 	SequenceNumber int
 	UID            uint32
+	Flagged        bool
 	ReceivedAt     time.Time
 	Subject        string
 	From           string
@@ -595,6 +598,7 @@ func (s *IMAPSession) deleteSelectedMailboxMessages(summaries []EmailSummary) []
 	orderedSummaries := append([]EmailSummary(nil), summaries...)
 
 	mailbox := orderedSummaries[0].Mailbox
+	moveToTrashFirst := s.shouldMoveAllMailToTrash(mailbox)
 	batchSize := deleteBatchSize
 	if batchSize <= 0 {
 		batchSize = defaultDeleteBatchSize
@@ -636,6 +640,59 @@ func (s *IMAPSession) deleteSelectedMailboxMessages(summaries []EmailSummary) []
 				summary.MessageID,
 				subject,
 			)
+
+			if summary.Flagged {
+				log.Printf(
+					"skipping email mailbox=%s seq=%d uid=%d received_at=%s message_id=%q subject=%q: flagged/starred",
+					summary.Mailbox,
+					summary.SequenceNumber,
+					summary.UID,
+					receivedAt,
+					summary.MessageID,
+					subject,
+				)
+				continue
+			}
+
+			if moveToTrashFirst {
+				moved, err := s.moveMessageToTrashByUIDWithRetry(summary, gmailTrashMailbox)
+				if err != nil {
+					log.Printf(
+						"skipping email mailbox=%s seq=%d uid=%d received_at=%s message_id=%q subject=%q: move to trash failed: %v",
+						summary.Mailbox,
+						summary.SequenceNumber,
+						summary.UID,
+						receivedAt,
+						summary.MessageID,
+						subject,
+						err,
+					)
+					continue
+				}
+				if !moved {
+					log.Printf(
+						"skipping email mailbox=%s seq=%d uid=%d received_at=%s message_id=%q subject=%q: unable to move to trash",
+						summary.Mailbox,
+						summary.SequenceNumber,
+						summary.UID,
+						receivedAt,
+						summary.MessageID,
+						subject,
+					)
+					continue
+				}
+
+				log.Printf(
+					"moved email to trash mailbox=%s uid=%d received_at=%s message_id=%q subject=%q",
+					summary.Mailbox,
+					summary.UID,
+					receivedAt,
+					summary.MessageID,
+					subject,
+				)
+				deletedSummaries = append(deletedSummaries, summary)
+				continue
+			}
 
 			if err := s.storeDeletedFlagByUIDWithRetry(summary); err != nil {
 				log.Printf(
@@ -728,6 +785,63 @@ func (s *IMAPSession) storeDeletedFlagByUID(uid uint32) error {
 
 	_, _, err := s.runCommand(`UID STORE %d +FLAGS.SILENT (\Deleted)`, uid)
 	return err
+}
+
+func (s *IMAPSession) moveMessageToTrashByUID(uid uint32, trashMailbox string) error {
+	if uid == 0 {
+		return fmt.Errorf("uid is required")
+	}
+
+	quotedTrashMailbox, err := quoteIMAPString(trashMailbox)
+	if err != nil {
+		return err
+	}
+
+	_, _, err = s.runCommand(`UID MOVE %d %s`, uid, quotedTrashMailbox)
+	return err
+}
+
+func (s *IMAPSession) moveMessageToTrashByUIDWithRetry(summary EmailSummary, trashMailbox string) (bool, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxStoreRetryAttempts; attempt++ {
+		err := s.moveMessageToTrashByUID(summary.UID, trashMailbox)
+		if err == nil {
+			return true, nil
+		}
+		if isUnsupportedMoveError(err) {
+			log.Printf(
+				"UID MOVE unsupported for mailbox=%s uid=%d; skipping all-mail delete for this message",
+				summary.Mailbox,
+				summary.UID,
+			)
+			return false, nil
+		}
+		if !isRetryableConnectionError(err) {
+			return false, err
+		}
+
+		lastErr = err
+		log.Printf(
+			"retrying UID MOVE for mailbox %s uid=%d after timeout (attempt %d/%d): %v",
+			summary.Mailbox,
+			summary.UID,
+			attempt+1,
+			maxStoreRetryAttempts,
+			err,
+		)
+		if attempt == maxStoreRetryAttempts-1 {
+			break
+		}
+		if err := s.reconnectAndSelectMailbox(summary.Mailbox); err != nil {
+			return false, err
+		}
+	}
+
+	if lastErr != nil {
+		return false, lastErr
+	}
+
+	return false, fmt.Errorf("uid move failed")
 }
 
 func (s *IMAPSession) reconnectAndSelectMailbox(mailbox string) error {
@@ -1215,7 +1329,7 @@ func (s *IMAPSession) fetchEmailSummaryBatch(mailbox string, sequenceNumbers []i
 	}
 
 	lines, _, err := s.runCommand(
-		"FETCH %s (UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID SUBJECT FROM TO)])",
+		"FETCH %s (UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID SUBJECT FROM TO)])",
 		strings.Join(values, ","),
 	)
 	if err != nil {
@@ -1245,7 +1359,7 @@ func (s *IMAPSession) fetchEmailSummaryBatchByUID(mailbox string, uids []uint32)
 	}
 
 	lines, _, err := s.runCommand(
-		"UID FETCH %s (UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID SUBJECT FROM TO)])",
+		"UID FETCH %s (UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID SUBJECT FROM TO)])",
 		strings.Join(values, ","),
 	)
 	if err != nil {
@@ -1399,6 +1513,7 @@ func parseFetchSummary(mailbox string, responseLine imapResponseLine) (EmailSumm
 	if err != nil {
 		return EmailSummary{}, fmt.Errorf("parse INTERNALDATE %q: %w", internalDateValue, err)
 	}
+	flagged := parseFlaggedFromFetchLine(responseLine.line)
 
 	headers, err := mail.ReadMessage(bytes.NewReader(responseLine.literal))
 	if err != nil {
@@ -1410,11 +1525,29 @@ func parseFetchSummary(mailbox string, responseLine imapResponseLine) (EmailSumm
 		MessageID:      normalizeMessageID(headers.Header.Get("Message-Id")),
 		SequenceNumber: sequenceNumber,
 		UID:            uid,
+		Flagged:        flagged,
 		ReceivedAt:     receivedAt,
 		Subject:        headers.Header.Get("Subject"),
 		From:           headers.Header.Get("From"),
 		To:             headers.Header.Get("To"),
 	}, nil
+}
+
+func parseFlaggedFromFetchLine(line string) bool {
+	upper := strings.ToUpper(line)
+	flagsIndex := strings.Index(upper, "FLAGS (")
+	if flagsIndex == -1 {
+		return false
+	}
+
+	start := flagsIndex + len("FLAGS (")
+	rest := upper[start:]
+	end := strings.IndexByte(rest, ')')
+	if end == -1 {
+		return false
+	}
+
+	return strings.Contains(rest[:end], `\FLAGGED`)
 }
 
 func extractUint32Token(line, prefix string) (uint32, error) {
@@ -1651,6 +1784,19 @@ func (c *IMAPClient) isGmail() bool {
 	return strings.EqualFold(host, "imap.gmail.com")
 }
 
+func (c *IMAPClient) isTaggedGmail() bool {
+	if c == nil {
+		return false
+	}
+
+	switch strings.ToLower(strings.TrimSpace(c.Provider)) {
+	case "gmail", "googlemail":
+		return true
+	default:
+		return false
+	}
+}
+
 func mailboxPriority(mailbox string) int {
 	lowerMailbox := strings.ToLower(mailbox)
 
@@ -1670,6 +1816,17 @@ func mailboxPriority(mailbox string) int {
 
 func isAllMailMailbox(mailbox string) bool {
 	return strings.Contains(mailbox, "all mail")
+}
+
+func (s *IMAPSession) shouldMoveAllMailToTrash(mailbox string) bool {
+	if s == nil || s.client == nil {
+		return false
+	}
+	if !s.client.isTaggedGmail() {
+		return false
+	}
+
+	return isAllMailMailbox(strings.ToLower(mailbox))
 }
 
 func isArchiveMailbox(mailbox string) bool {
@@ -1715,6 +1872,18 @@ func isRetryableConnectionError(err error) bool {
 	return strings.Contains(lower, "broken pipe") ||
 		strings.Contains(lower, "connection reset by peer") ||
 		strings.Contains(lower, "use of closed network connection")
+}
+
+func isUnsupportedMoveError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "unsupported uid command") ||
+		strings.Contains(lower, "unknown command") ||
+		strings.Contains(lower, "not supported") ||
+		strings.Contains(lower, "does not support")
 }
 
 func isDNSLookupError(err error) bool {

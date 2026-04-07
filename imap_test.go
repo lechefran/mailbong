@@ -236,6 +236,39 @@ func TestParseESearchIDsSupportsSplitAllSets(t *testing.T) {
 	}
 }
 
+func TestParseFlaggedFromFetchLine(t *testing.T) {
+	testCases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{
+			name: "flagged",
+			line: `* 1 FETCH (UID 123 FLAGS (\Seen \Flagged) INTERNALDATE "01-Apr-2026 08:00:00 +0000")`,
+			want: true,
+		},
+		{
+			name: "not flagged",
+			line: `* 1 FETCH (UID 123 FLAGS (\Seen) INTERNALDATE "01-Apr-2026 08:00:00 +0000")`,
+			want: false,
+		},
+		{
+			name: "no flags",
+			line: `* 1 FETCH (UID 123 INTERNALDATE "01-Apr-2026 08:00:00 +0000")`,
+			want: false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := parseFlaggedFromFetchLine(testCase.line)
+			if got != testCase.want {
+				t.Fatalf("parseFlaggedFromFetchLine(%q) = %v, want %v", testCase.line, got, testCase.want)
+			}
+		})
+	}
+}
+
 func TestIMAPSessionReadInboxViews(t *testing.T) {
 	now := time.Date(2026, time.April, 1, 15, 30, 0, 0, time.UTC)
 	server := newFakeIMAPServer(t, fakeIMAPServerConfig{
@@ -519,6 +552,106 @@ func TestPrioritizeDeleteMailboxesLeavesAllMailInNormalOrderForNonGmail(t *testi
 
 	if !slices.Equal(prioritized, want) {
 		t.Fatalf("prioritizeDeleteMailboxes() = %v, want %v", prioritized, want)
+	}
+}
+
+func TestIMAPSessionShouldMoveAllMailToTrash(t *testing.T) {
+	testCases := []struct {
+		name        string
+		provider    string
+		mailbox     string
+		wantMove    bool
+		withSession bool
+	}{
+		{
+			name:        "gmail all mail",
+			provider:    "gmail",
+			mailbox:     "[Gmail]/All Mail",
+			wantMove:    true,
+			withSession: true,
+		},
+		{
+			name:        "googlemail all mail",
+			provider:    "googlemail",
+			mailbox:     "[Gmail]/All Mail",
+			wantMove:    true,
+			withSession: true,
+		},
+		{
+			name:        "gmail inbox",
+			provider:    "gmail",
+			mailbox:     "INBOX",
+			wantMove:    false,
+			withSession: true,
+		},
+		{
+			name:        "non-gmail all mail name",
+			provider:    "icloud",
+			mailbox:     "[Gmail]/All Mail",
+			wantMove:    false,
+			withSession: true,
+		},
+		{
+			name:        "nil session",
+			provider:    "gmail",
+			mailbox:     "[Gmail]/All Mail",
+			wantMove:    false,
+			withSession: false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var session *IMAPSession
+			if testCase.withSession {
+				session = &IMAPSession{
+					client: &IMAPClient{Provider: testCase.provider},
+				}
+			}
+
+			got := session.shouldMoveAllMailToTrash(testCase.mailbox)
+			if got != testCase.wantMove {
+				t.Fatalf("shouldMoveAllMailToTrash(%q) = %v, want %v", testCase.mailbox, got, testCase.wantMove)
+			}
+		})
+	}
+}
+
+func TestIsUnsupportedMoveError(t *testing.T) {
+	testCases := []struct {
+		name    string
+		err     error
+		want    bool
+	}{
+		{
+			name: "unsupported uid command",
+			err:  errors.New("A0007 BAD unsupported UID command"),
+			want: true,
+		},
+		{
+			name: "not supported",
+			err:  errors.New("A0007 NO [CANNOT] MOVE not supported"),
+			want: true,
+		},
+		{
+			name: "timeout",
+			err:  errors.New("read tcp: i/o timeout"),
+			want: false,
+		},
+		{
+			name: "nil",
+			err:  nil,
+			want: false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := isUnsupportedMoveError(testCase.err)
+			if got != testCase.want {
+				t.Fatalf("isUnsupportedMoveError(%v) = %v, want %v", testCase.err, got, testCase.want)
+			}
+		})
 	}
 }
 
@@ -936,6 +1069,83 @@ func TestIMAPSessionDeleteInboxOlderThanDaysSkipsFlaggedEvenWhenRequested(t *tes
 	}
 }
 
+func TestIMAPSessionDeleteInboxOlderThanDaysSkipsFlaggedIfSearchReturnsIt(t *testing.T) {
+	now := time.Date(2026, time.April, 2, 15, 30, 0, 0, time.UTC)
+	server := newFakeIMAPServer(t, fakeIMAPServerConfig{
+		email:    "user@example.com",
+		password: "correct-password",
+		accept:   true,
+		mailboxes: []fakeIMAPMailbox{
+			{
+				Name:            "[Gmail]/All Mail",
+				IgnoreUnflagged: true,
+				Messages: []fakeIMAPMessage{
+					{
+						UID:        101,
+						MessageID:  "<flagged-old@example.com>",
+						ReceivedAt: time.Date(2025, time.December, 1, 8, 0, 0, 0, time.UTC),
+						Subject:    "Flagged old message",
+						From:       "flagged@example.com",
+						To:         "user@example.com",
+						Flagged:    true,
+					},
+					{
+						UID:        102,
+						MessageID:  "<regular-old@example.com>",
+						ReceivedAt: time.Date(2025, time.December, 2, 8, 0, 0, 0, time.UTC),
+						Subject:    "Regular old message",
+						From:       "regular@example.com",
+						To:         "user@example.com",
+					},
+				},
+			},
+			{
+				Name: "[Gmail]/Trash",
+			},
+		},
+	})
+	t.Cleanup(server.Close)
+
+	client := &IMAPClient{
+		Provider:  "gmail",
+		Address:   server.Address(),
+		Email:     "user@example.com",
+		Password:  "correct-password",
+		TLSConfig: server.ClientTLSConfig(),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	session, err := client.Login(ctx)
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	defer session.Logout()
+
+	deletedEmails, err := session.DeleteInboxOlderThanDays(now, 90, false)
+	if err != nil {
+		t.Fatalf("DeleteInboxOlderThanDays() error = %v", err)
+	}
+	if len(deletedEmails) != 1 {
+		t.Fatalf("DeleteInboxOlderThanDays() deleted = %v, want only non-flagged email deleted", deletedEmails)
+	}
+	if deletedEmails[0].Subject != "Regular old message" {
+		t.Fatalf("deleted subject = %q, want regular old message", deletedEmails[0].Subject)
+	}
+
+	remainingEmails, err := session.ReadInboxAll()
+	if err != nil {
+		t.Fatalf("ReadInboxAll() error = %v", err)
+	}
+	if len(remainingEmails) != 1 {
+		t.Fatalf("ReadInboxAll() emails = %v, want 1 flagged email remaining", remainingEmails)
+	}
+	if remainingEmails[0].Subject != "Flagged old message" {
+		t.Fatalf("remaining subject = %q, want flagged email", remainingEmails[0].Subject)
+	}
+}
+
 func TestIMAPSessionDeleteInboxOlderThanDaysGmailAllMailUsesPerEmailDelete(t *testing.T) {
 	now := time.Date(2026, time.April, 2, 15, 30, 0, 0, time.UTC)
 	server := newFakeIMAPServer(t, fakeIMAPServerConfig{
@@ -968,6 +1178,9 @@ func TestIMAPSessionDeleteInboxOlderThanDaysGmailAllMailUsesPerEmailDelete(t *te
 						To:         "user@example.com",
 					},
 				},
+			},
+			{
+				Name: "[Gmail]/Trash",
 			},
 		},
 	})
@@ -1184,6 +1397,9 @@ func TestIMAPSessionDeleteInboxOlderThanDaysRecoversAfterAllMailStoreTimeout(t *
 						To:         "user@example.com",
 					},
 				},
+			},
+			{
+				Name: "[Gmail]/Trash",
 			},
 		},
 	})
@@ -1451,6 +1667,7 @@ type fakeIMAPMailbox struct {
 	Name                  string
 	NoSelect              bool
 	UnquotedList          bool
+	IgnoreUnflagged       bool
 	FailSelect            bool
 	FailSearch            bool
 	FailFetch             bool
@@ -1726,6 +1943,18 @@ func (s *fakeIMAPServer) handleConn(t *testing.T, conn net.Conn) {
 					t.Logf("UID STORE OK response error = %v", err)
 					return
 				}
+			case "MOVE":
+				if err := s.moveMessagesByUID(s.selected, uidParts[1]); err != nil {
+					if _, writeErr := fmt.Fprintf(writer, "%s NO %s\r\n", tag, err); writeErr != nil {
+						t.Logf("UID MOVE NO response error = %v", writeErr)
+						return
+					}
+					break
+				}
+				if _, err := fmt.Fprintf(writer, "%s OK UID MOVE completed\r\n", tag); err != nil {
+					t.Logf("UID MOVE OK response error = %v", err)
+					return
+				}
 			default:
 				if _, err := fmt.Fprintf(writer, "%s BAD unsupported UID command\r\n", tag); err != nil {
 					t.Logf("UID BAD response error = %v", err)
@@ -1878,7 +2107,7 @@ func (s *fakeIMAPServer) searchMessages(mailboxName, criteria string) ([]int, er
 		if message.Deleted {
 			continue
 		}
-		if unflagged && message.Flagged {
+		if unflagged && message.Flagged && !mailbox.IgnoreUnflagged {
 			continue
 		}
 		if sinceDate != nil && startOfDay(message.ReceivedAt).Before(*sinceDate) {
@@ -1957,12 +2186,17 @@ func (s *fakeIMAPServer) writeFetchResponse(writer *bufio.Writer, tag, mailboxNa
 			message.From,
 			message.To,
 		)
+		flags := ""
+		if message.Flagged {
+			flags = `\Flagged`
+		}
 
 		if _, err := fmt.Fprintf(
 			writer,
-			"* %d FETCH (UID %d INTERNALDATE %q BODY[HEADER.FIELDS (MESSAGE-ID SUBJECT FROM TO)] {%d}\r\n",
+			"* %d FETCH (UID %d FLAGS (%s) INTERNALDATE %q BODY[HEADER.FIELDS (MESSAGE-ID SUBJECT FROM TO)] {%d}\r\n",
 			sequenceNumber,
 			message.UID,
+			flags,
 			message.ReceivedAt.Format("02-Jan-2006 15:04:05 -0700"),
 			len(headers),
 		); err != nil {
@@ -2020,12 +2254,17 @@ func (s *fakeIMAPServer) writeUIDFetchResponse(writer *bufio.Writer, tag, mailbo
 			message.From,
 			message.To,
 		)
+		flags := ""
+		if message.Flagged {
+			flags = `\Flagged`
+		}
 
 		if _, err := fmt.Fprintf(
 			writer,
-			"* %d FETCH (UID %d INTERNALDATE %q BODY[HEADER.FIELDS (MESSAGE-ID SUBJECT FROM TO)] {%d}\r\n",
+			"* %d FETCH (UID %d FLAGS (%s) INTERNALDATE %q BODY[HEADER.FIELDS (MESSAGE-ID SUBJECT FROM TO)] {%d}\r\n",
 			sequenceNumber,
 			message.UID,
+			flags,
 			message.ReceivedAt.Format("02-Jan-2006 15:04:05 -0700"),
 			len(headers),
 		); err != nil {
@@ -2129,6 +2368,60 @@ func (s *fakeIMAPServer) storeDeletedFlagsByUID(mailboxName, args string) error 
 			return fmt.Errorf("uid %d out of range", uid)
 		}
 		mailbox.Messages[sequenceNumber-1].Deleted = true
+	}
+
+	return nil
+}
+
+func (s *fakeIMAPServer) moveMessagesByUID(mailboxName, args string) error {
+	sourceMailbox, ok := s.findMailbox([]string{mailboxName})
+	if !ok {
+		return fmt.Errorf("no selected mailbox")
+	}
+
+	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid UID MOVE args: %s", args)
+	}
+
+	uids, err := parseUIDSet(parts[0])
+	if err != nil {
+		return err
+	}
+
+	moveArgs, err := parseIMAPQuotedArgs(parts[1])
+	if err != nil {
+		return err
+	}
+	if len(moveArgs) != 1 {
+		return fmt.Errorf("invalid UID MOVE mailbox args: %s", args)
+	}
+
+	targetMailbox, ok := s.findMailbox(moveArgs)
+	if !ok {
+		return fmt.Errorf("target mailbox %s not found", moveArgs[0])
+	}
+
+	uidSet := make(map[uint32]struct{}, len(uids))
+	for _, uid := range uids {
+		uidSet[uid] = struct{}{}
+	}
+
+	var movedMessages []fakeIMAPMessage
+	remainingMessages := sourceMailbox.Messages[:0]
+	for _, message := range sourceMailbox.Messages {
+		if _, shouldMove := uidSet[message.UID]; shouldMove && !message.Deleted {
+			moved := message
+			moved.Deleted = false
+			movedMessages = append(movedMessages, moved)
+			continue
+		}
+		remainingMessages = append(remainingMessages, message)
+	}
+	sourceMailbox.Messages = remainingMessages
+
+	if len(movedMessages) > 0 {
+		targetMailbox.Messages = append(targetMailbox.Messages, movedMessages...)
 	}
 
 	return nil
