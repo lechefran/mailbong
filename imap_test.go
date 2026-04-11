@@ -1353,8 +1353,8 @@ func TestIMAPSessionDeleteInboxOlderThanDaysSkipsStoreFailures(t *testing.T) {
 	defer session.Logout()
 
 	deletedEmails, err := session.DeleteInboxOlderThanDays(now, 90, false)
-	if err != nil {
-		t.Fatalf("DeleteInboxOlderThanDays() error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "delete incomplete") {
+		t.Fatalf("DeleteInboxOlderThanDays() error = %v, want delete incomplete", err)
 	}
 	if len(deletedEmails) != 0 {
 		t.Fatalf("DeleteInboxOlderThanDays() deleted = %v, want no emails deleted on store failures", deletedEmails)
@@ -1562,8 +1562,8 @@ func TestIMAPSessionDeleteInboxOlderThanDaysSkipsTimedOutMailboxDeletes(t *testi
 	defer session.Logout()
 
 	deletedEmails, err := session.DeleteInboxOlderThanDays(now, 90, false)
-	if err != nil {
-		t.Fatalf("DeleteInboxOlderThanDays() error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "delete incomplete") {
+		t.Fatalf("DeleteInboxOlderThanDays() error = %v, want delete incomplete", err)
 	}
 
 	if len(deletedEmails) != 2 {
@@ -1630,8 +1630,8 @@ func TestIMAPSessionDeleteInboxOlderThanDaysReturnsPartialResultsAfterSearchTime
 	defer session.Logout()
 
 	deletedEmails, err := session.DeleteInboxOlderThanDays(now, 90, false)
-	if err != nil {
-		t.Fatalf("DeleteInboxOlderThanDays() error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "delete incomplete") {
+		t.Fatalf("DeleteInboxOlderThanDays() error = %v, want delete incomplete", err)
 	}
 	if len(deletedEmails) != 1 {
 		t.Fatalf("DeleteInboxOlderThanDays() deleted = %v, want 1 partial delete", deletedEmails)

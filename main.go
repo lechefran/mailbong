@@ -121,9 +121,15 @@ func (a *App) Run(ctx context.Context) error {
 
 			emails, err := a.runAction(session)
 			logoutErr := session.Logout()
+			if len(accounts) > 1 {
+				for index := range emails {
+					emails[index].Account = account.Name
+				}
+			}
 			if err != nil {
 				results <- accountRunResult{
 					accountName: account.Name,
+					emails:      emails,
 					err:         err,
 				}
 				return
@@ -137,6 +143,7 @@ func (a *App) Run(ctx context.Context) error {
 			if logoutErr != nil {
 				results <- accountRunResult{
 					accountName: account.Name,
+					emails:      emails,
 					err:         logoutErr,
 				}
 				return
@@ -146,12 +153,6 @@ func (a *App) Run(ctx context.Context) error {
 				log.Printf("finished deletion for account %s: deleted %d emails", account.Name, len(emails))
 			} else {
 				log.Printf("completed account %s action=%s emails=%d", account.Name, actionName, len(emails))
-			}
-
-			if len(accounts) > 1 {
-				for index := range emails {
-					emails[index].Account = account.Name
-				}
 			}
 
 			results <- accountRunResult{
@@ -169,11 +170,11 @@ func (a *App) Run(ctx context.Context) error {
 	var allEmails []EmailSummary
 	var failures []string
 	for result := range results {
+		allEmails = append(allEmails, result.emails...)
 		if result.err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", result.accountName, result.err))
 			continue
 		}
-		allEmails = append(allEmails, result.emails...)
 	}
 
 	if len(allEmails) == 0 && len(failures) > 0 {

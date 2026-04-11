@@ -452,7 +452,91 @@ deletePasses:
 		return nil, firstErr
 	}
 
-	return dedupeEmailSummaries(deletedSummaries), nil
+	deletedSummaries = dedupeEmailSummaries(deletedSummaries)
+	remainingCount, err := s.checkDeleteCompletion(format, args...)
+	if err != nil {
+		log.Printf("delete incomplete: unable to verify all mailboxes: %v", err)
+		return deletedSummaries, fmt.Errorf("delete incomplete: unable to verify all mailboxes: %w", err)
+	}
+	if remainingCount > 0 {
+		return deletedSummaries, fmt.Errorf("delete incomplete: %d emails still match delete criteria", remainingCount)
+	}
+
+	return deletedSummaries, nil
+}
+
+func (s *IMAPSession) checkDeleteCompletion(format string, args ...any) (int, error) {
+	mailboxes, err := s.listMailboxes()
+	if err != nil {
+		return 0, fmt.Errorf("list mailboxes for delete verification: %w", err)
+	}
+
+	mailboxes = prioritizeDeleteMailboxes(mailboxes, s.isGmailAccount())
+	remainingCount := 0
+	skippedMailboxCount := 0
+	for _, mailbox := range mailboxes {
+		if err := s.deleteSelectMailboxWithRetry(mailbox); err != nil {
+			if isRetryableConnectionError(err) {
+				return remainingCount, fmt.Errorf("select mailbox %s for delete verification: %w", mailbox, err)
+			}
+			skippedMailboxCount++
+			log.Printf("delete verification: skipping mailbox %s after select error: %v", mailbox, err)
+			continue
+		}
+
+		uids, err := s.deleteSearchUIDsWithRetry(mailbox, format, args...)
+		if err != nil {
+			if isRetryableConnectionError(err) {
+				return remainingCount, fmt.Errorf("search mailbox %s for delete verification: %w", mailbox, err)
+			}
+			skippedMailboxCount++
+			log.Printf("delete verification: skipping mailbox %s after search error: %v", mailbox, err)
+			continue
+		}
+		if len(uids) == 0 {
+			continue
+		}
+
+		summaries, err := s.fetchEmailSummariesByUID(mailbox, uids)
+		if err != nil {
+			if isRetryableConnectionError(err) {
+				return remainingCount, fmt.Errorf("fetch mailbox %s for delete verification: %w", mailbox, err)
+			}
+			skippedMailboxCount++
+			log.Printf("delete verification: skipping mailbox %s after fetch error: %v", mailbox, err)
+			continue
+		}
+
+		mailboxRemainingCount := 0
+		for _, summary := range summaries {
+			if summary.Flagged {
+				continue
+			}
+			mailboxRemainingCount++
+		}
+		if mailboxRemainingCount == 0 {
+			continue
+		}
+
+		remainingCount += mailboxRemainingCount
+		log.Printf(
+			"delete incomplete: mailbox %s still has %d emails matching delete criteria",
+			mailbox,
+			mailboxRemainingCount,
+		)
+	}
+
+	if remainingCount > 0 {
+		log.Printf(
+			"delete incomplete: %d emails still match delete criteria across account (skipped_mailboxes=%d)",
+			remainingCount,
+			skippedMailboxCount,
+		)
+		return remainingCount, nil
+	}
+
+	log.Printf("delete complete: no emails matching delete criteria remain across account (skipped_mailboxes=%d)", skippedMailboxCount)
+	return 0, nil
 }
 
 func (s *IMAPSession) deleteMailboxWithRetry(mailbox string, format string, args ...any) ([]EmailSummary, int, bool, error) {
