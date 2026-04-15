@@ -7,7 +7,26 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/lechefran/mailbin"
 )
+
+type ADDR string
+
+const (
+	AOL        ADDR = mailbin.AOL
+	AOL_EXPORT ADDR = mailbin.AOL_EXPORT
+	GMAIL      ADDR = mailbin.GMAIL
+	ICLOUD     ADDR = mailbin.ICLOUD
+	OUTLOOK    ADDR = mailbin.OUTLOOK
+	YAHOO      ADDR = mailbin.YAHOO
+	ZOHO       ADDR = mailbin.ZOHO
+)
+
+type ConfiguredAccount struct {
+	Name   string
+	Config mailbin.Config
+}
 
 type accountsConfig struct {
 	Accounts []accountConfig `json:"accounts"`
@@ -19,6 +38,10 @@ type accountConfig struct {
 	Provider    string `json:"provider"`
 	IMAPAddr    string `json:"imap_addr"`
 	PasswordEnv string `json:"password_env"`
+}
+
+func resolveIMAPAddress(provider string, address string) (string, error) {
+	return mailbin.ResolveIMAPAddress(provider, address)
 }
 
 func loadConfiguredAccounts(
@@ -35,13 +58,12 @@ func loadConfiguredAccounts(
 	}
 
 	selectedAccount = strings.TrimSpace(selectedAccount)
-	var accounts []ConfiguredAccount
+	accounts := make([]ConfiguredAccount, 0, len(config.Accounts))
 	for _, configured := range config.Accounts {
 		name := strings.TrimSpace(configured.Name)
 		if name == "" {
 			name = defaultAccountName(strings.TrimSpace(configured.Email))
 		}
-
 		if selectedAccount != "" && name != selectedAccount {
 			continue
 		}
@@ -58,7 +80,7 @@ func loadConfiguredAccounts(
 
 		accounts = append(accounts, ConfiguredAccount{
 			Name: name,
-			Client: &IMAPClient{
+			Config: mailbin.Config{
 				Provider: strings.TrimSpace(configured.Provider),
 				Address:  address,
 				Email:    strings.TrimSpace(configured.Email),

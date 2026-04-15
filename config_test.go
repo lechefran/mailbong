@@ -104,13 +104,13 @@ func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
 	if len(accounts) != 2 {
 		t.Fatalf("loadConfiguredAccounts() count = %d, want 2", len(accounts))
 	}
-	if accounts[0].Client.Address != string(GMAIL) {
-		t.Fatalf("first account address = %q, want %q", accounts[0].Client.Address, string(GMAIL))
+	if accounts[0].Config.Address != string(GMAIL) {
+		t.Fatalf("first account address = %q, want %q", accounts[0].Config.Address, string(GMAIL))
 	}
-	if accounts[1].Client.Address != string(ICLOUD) {
-		t.Fatalf("second account address = %q, want %q", accounts[1].Client.Address, string(ICLOUD))
+	if accounts[1].Config.Address != string(ICLOUD) {
+		t.Fatalf("second account address = %q, want %q", accounts[1].Config.Address, string(ICLOUD))
 	}
-	if accounts[0].Client.Password != "gmail-secret" || accounts[1].Client.Password != "icloud-secret" {
+	if accounts[0].Config.Password != "gmail-secret" || accounts[1].Config.Password != "icloud-secret" {
 		t.Fatalf("account passwords = %#v, want provider env passwords", accounts)
 	}
 }
@@ -155,8 +155,8 @@ func TestLoadConfiguredAccountsSelectsOneAccount(t *testing.T) {
 	if accounts[0].Name != "icloud" {
 		t.Fatalf("selected account = %q, want icloud", accounts[0].Name)
 	}
-	if accounts[0].Client.Address != string(ICLOUD) {
-		t.Fatalf("selected account address = %q, want %q", accounts[0].Client.Address, string(ICLOUD))
+	if accounts[0].Config.Address != string(ICLOUD) {
+		t.Fatalf("selected account address = %q, want %q", accounts[0].Config.Address, string(ICLOUD))
 	}
 }
 
@@ -189,8 +189,8 @@ func TestLoadConfiguredAccountsUsesAddressOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfiguredAccounts() error = %v", err)
 	}
-	if accounts[0].Client.Address != "imap.custom.example:993" {
-		t.Fatalf("override address = %q, want custom address", accounts[0].Client.Address)
+	if accounts[0].Config.Address != "imap.custom.example:993" {
+		t.Fatalf("override address = %q, want custom address", accounts[0].Config.Address)
 	}
 }
 
