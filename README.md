@@ -19,6 +19,32 @@ MAILBIN_PASSWORD='app-password' go run . -config accounts.json -account work -ag
 
 `-age` (or `MAILBIN_AGE`) is required and must be `>= 0`.
 
+By default the app runs once and exits.
+
+To run on a cron schedule, set `MAILBONG_SCHEDULE` using 5-field cron format:
+
+```bash
+MAILBONG_SCHEDULE="0 0 * * *" MAILBIN_PASSWORD='app-password' go run . -config accounts.json -age 30
+```
+
+When `MAILBONG_SCHEDULE` is set, the process stays running and triggers at matching times in local time.
+
+Cron fields:
+
+- minute: `0-59`
+- hour: `0-23`
+- day of month: `1-31`
+- month: `1-12`
+- day of week: `0-7` (`0` and `7` are Sunday)
+
+Supported cron tokens per field:
+
+- `*`
+- single value (for example `5`)
+- list (for example `1,15,30`)
+- range (for example `1-5`)
+- step (for example `*/15`, `1-10/2`, `5/10`)
+
 ## Accounts Config
 
 Use [`accounts.example.json`](./accounts.example.json) as a template.
@@ -57,3 +83,4 @@ Password resolution for configured accounts:
 - `MAILBIN_AGE`
 - `MAILBIN_CONCURRENCY`
 - `MAILBIN_PASSWORD`
+- `MAILBONG_SCHEDULE` (optional 5-field cron schedule in local time)

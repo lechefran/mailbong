@@ -279,3 +279,102 @@ func TestResolvePassword(t *testing.T) {
 		})
 	}
 }
+
+func TestParseCronSchedule(t *testing.T) {
+	testCases := []struct {
+		name      string
+		value     string
+		want      CronSchedule
+		wantError string
+	}{
+		{
+			name:  "valid all wildcards",
+			value: "* * * * *",
+			want: CronSchedule{
+				Minute:     cronField{Any: true},
+				Hour:       cronField{Any: true},
+				DayOfMonth: cronField{Any: true},
+				Month:      cronField{Any: true},
+				DayOfWeek:  cronField{Any: true},
+			},
+		},
+		{
+			name:      "invalid field count",
+			value:     "0 0 * *",
+			wantError: "5 cron fields",
+		},
+		{
+			name:      "invalid minute",
+			value:     "60 0 * * *",
+			wantError: "minute field",
+		},
+		{
+			name:      "invalid day-of-week",
+			value:     "0 0 * * 8",
+			wantError: "day-of-week field",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got, err := parseCronSchedule(testCase.value)
+			if testCase.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), testCase.wantError) {
+					t.Fatalf("parseCronSchedule() error = %v, want %q", err, testCase.wantError)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("parseCronSchedule() error = %v", err)
+			}
+			if got.Minute.Any != testCase.want.Minute.Any ||
+				got.Hour.Any != testCase.want.Hour.Any ||
+				got.DayOfMonth.Any != testCase.want.DayOfMonth.Any ||
+				got.Month.Any != testCase.want.Month.Any ||
+				got.DayOfWeek.Any != testCase.want.DayOfWeek.Any {
+				t.Fatalf("parseCronSchedule() = %+v, want %+v", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestNextCronRun(t *testing.T) {
+	location := time.FixedZone("UTC-5", -5*60*60)
+	testCases := []struct {
+		name       string
+		expression string
+		now        time.Time
+		want       time.Time
+	}{
+		{
+			name:       "daily midnight",
+			expression: "0 0 * * *",
+			now:        time.Date(2026, time.April, 16, 23, 30, 0, 0, location),
+			want:       time.Date(2026, time.April, 17, 0, 0, 0, 0, location),
+		},
+		{
+			name:       "every fifteen minutes",
+			expression: "*/15 * * * *",
+			now:        time.Date(2026, time.April, 16, 10, 7, 45, 0, location),
+			want:       time.Date(2026, time.April, 16, 10, 15, 0, 0, location),
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			schedule, err := parseCronSchedule(testCase.expression)
+			if err != nil {
+				t.Fatalf("parseCronSchedule() error = %v", err)
+			}
+
+			got, err := nextCronRun(testCase.now, schedule)
+			if err != nil {
+				t.Fatalf("nextCronRun() error = %v", err)
+			}
+			if !got.Equal(testCase.want) {
+				t.Fatalf("nextCronRun() = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+}
