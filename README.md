@@ -8,26 +8,20 @@
 MAILBIN_PASSWORD='app-password' go run . \
   -provider gmail \
   -email you@gmail.com \
+  -schedule "0 0 * * *" \
   -age 30
 ```
 
 It also supports configured accounts via `accounts.json`:
 
 ```bash
-MAILBIN_PASSWORD='app-password' go run . -config accounts.json -account work -age 30
+MAILBIN_PASSWORD='app-password' go run . -config accounts.json -account work -schedule "0 0 * * *" -age 30
 ```
 
 `-age` (or `MAILBIN_AGE`) is required and must be `>= 0`.
+`-schedule` is required and must be a valid 5-field cron expression.
 
-By default the app runs once and exits.
-
-To run on a cron schedule, set `MAILBONG_SCHEDULE` using 5-field cron format:
-
-```bash
-MAILBONG_SCHEDULE="0 0 * * *" MAILBIN_PASSWORD='app-password' go run . -config accounts.json -age 30
-```
-
-When `MAILBONG_SCHEDULE` is set, the process stays running and triggers at matching times in local time.
+The process stays running and triggers at matching times in local time.
 
 Cron fields:
 
@@ -69,6 +63,7 @@ Password resolution for configured accounts:
 - `-provider string`: provider for built-in IMAP defaults
 - `-imap-addr string`: explicit IMAP address in `host:port`
 - `-email string`: login email for single-account mode
+- `-schedule string`: required cron schedule (`minute hour day-of-month month day-of-week`)
 - `-age int`: minimum email age in days to delete (`>= 0`)
 - `-concurrency int`: max concurrent account runs (`0` = unlimited)
 - `-timeout duration`: per-account timeout (default `30s`)
@@ -83,4 +78,3 @@ Password resolution for configured accounts:
 - `MAILBIN_AGE`
 - `MAILBIN_CONCURRENCY`
 - `MAILBIN_PASSWORD`
-- `MAILBONG_SCHEDULE` (optional 5-field cron schedule in local time)

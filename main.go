@@ -54,20 +54,7 @@ type cronField struct {
 }
 
 func main() {
-	app, err := newAppFromFlags()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	scheduleText := strings.TrimSpace(os.Getenv("MAILBONG_SCHEDULE"))
-	if scheduleText == "" {
-		if err := app.Run(context.Background()); err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
-
-	schedule, err := parseCronSchedule(scheduleText)
+	app, schedule, err := newAppFromFlags()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -79,38 +66,48 @@ func main() {
 	}
 }
 
-func newAppFromFlags() (*App, error) {
+func newAppFromFlags() (*App, CronSchedule, error) {
 	configPath := flag.String("config", envOrDefault("MAILBIN_CONFIG", ""), "path to accounts config JSON")
 	accountName := flag.String("account", envOrDefault("MAILBIN_ACCOUNT", ""), "account name from config to run")
 	provider := flag.String("provider", envOrDefault("MAILBIN_PROVIDER", ""), "email provider name for built-in IMAP defaults")
 	address := flag.String("imap-addr", envOrDefault("MAILBIN_IMAP_ADDR", ""), "IMAP server address in host:port format")
 	email := flag.String("email", envOrDefault("MAILBIN_EMAIL", ""), "email address used for IMAP login")
+	scheduleText := flag.String("schedule", "", "cron schedule with 5 fields (minute hour day-of-month month day-of-week)")
 	ageDefault, err := envIntOrDefault("MAILBIN_AGE", -1)
 	if err != nil {
-		return nil, err
+		return nil, CronSchedule{}, err
 	}
 	age := flag.Int("age", ageDefault, "minimum email age in days to delete")
 	concurrencyDefault, err := envIntOrDefault("MAILBIN_CONCURRENCY", 0)
 	if err != nil {
-		return nil, err
+		return nil, CronSchedule{}, err
 	}
 	concurrency := flag.Int("concurrency", concurrencyDefault, "max concurrent account runs (0 = unlimited)")
 	timeout := flag.Duration("timeout", defaultAccountTimeout, "connection timeout")
 	flag.Parse()
 
 	if *concurrency < 0 {
-		return nil, fmt.Errorf("concurrency must be 0 or greater")
+		return nil, CronSchedule{}, fmt.Errorf("concurrency must be 0 or greater")
+	}
+
+	scheduleValue := strings.TrimSpace(*scheduleText)
+	if scheduleValue == "" {
+		return nil, CronSchedule{}, fmt.Errorf("schedule flag is required")
+	}
+	schedule, err := parseCronSchedule(scheduleValue)
+	if err != nil {
+		return nil, CronSchedule{}, err
 	}
 
 	var accounts []ConfiguredAccount
 	if *configPath == "" {
 		password, err := resolvePassword(os.Stdin, os.Stderr, os.Getenv, stdinIsInteractive())
 		if err != nil {
-			return nil, err
+			return nil, CronSchedule{}, err
 		}
 		addressValue, err := resolveIMAPAddress(*provider, *address)
 		if err != nil {
-			return nil, err
+			return nil, CronSchedule{}, err
 		}
 
 		accounts = []ConfiguredAccount{
@@ -127,7 +124,7 @@ func newAppFromFlags() (*App, error) {
 	} else {
 		accounts, err = loadConfiguredAccounts(*configPath, *accountName, os.Stdin, os.Stderr, os.Getenv, stdinIsInteractive())
 		if err != nil {
-			return nil, err
+			return nil, CronSchedule{}, err
 		}
 	}
 
@@ -138,7 +135,7 @@ func newAppFromFlags() (*App, error) {
 			DefaultAge:  *age,
 			Now:         time.Now,
 			Output:      os.Stdout,
-		}, nil
+		}, schedule, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
