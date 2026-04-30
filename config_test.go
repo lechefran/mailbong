@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -81,7 +82,7 @@ func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
   ]
 }`)
 
-	accounts, err := loadConfiguredAccounts(
+	loadedConfig, err := loadConfiguredAccounts(
 		configPath,
 		"",
 		strings.NewReader(""),
@@ -101,6 +102,7 @@ func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfiguredAccounts() error = %v", err)
 	}
+	accounts := loadedConfig.Accounts
 	if len(accounts) != 2 {
 		t.Fatalf("loadConfiguredAccounts() count = %d, want 2", len(accounts))
 	}
@@ -133,7 +135,7 @@ func TestLoadConfiguredAccountsSelectsOneAccount(t *testing.T) {
   ]
 }`)
 
-	accounts, err := loadConfiguredAccounts(
+	loadedConfig, err := loadConfiguredAccounts(
 		configPath,
 		"icloud",
 		strings.NewReader(""),
@@ -149,6 +151,7 @@ func TestLoadConfiguredAccountsSelectsOneAccount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfiguredAccounts() error = %v", err)
 	}
+	accounts := loadedConfig.Accounts
 	if len(accounts) != 1 {
 		t.Fatalf("loadConfiguredAccounts() count = %d, want 1", len(accounts))
 	}
@@ -173,7 +176,7 @@ func TestLoadConfiguredAccountsUsesAddressOverride(t *testing.T) {
   ]
 }`)
 
-	accounts, err := loadConfiguredAccounts(
+	loadedConfig, err := loadConfiguredAccounts(
 		configPath,
 		"",
 		strings.NewReader(""),
@@ -189,8 +192,50 @@ func TestLoadConfiguredAccountsUsesAddressOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfiguredAccounts() error = %v", err)
 	}
+	accounts := loadedConfig.Accounts
 	if accounts[0].Config.Address != "imap.custom.example:993" {
 		t.Fatalf("override address = %q, want custom address", accounts[0].Config.Address)
+	}
+}
+
+func TestLoadConfiguredAccountsReadsBlacklistFromAccounts(t *testing.T) {
+	configPath := writeAccountsConfig(t, `{
+  "blacklist": [
+    " blocked@example.com ",
+    "",
+    "BLOCKED@example.com",
+    "news@example.com"
+  ],
+  "accounts": [
+    {
+      "name": "gmail",
+      "email": "one@example.com",
+      "provider": "gmail",
+      "password_env": "MAILBIN_GMAIL_PASSWORD"
+    }
+  ]
+}`)
+
+	loadedConfig, err := loadConfiguredAccounts(
+		configPath,
+		"",
+		strings.NewReader(""),
+		&bytes.Buffer{},
+		func(key string) string {
+			if key == "MAILBIN_GMAIL_PASSWORD" {
+				return "gmail-secret"
+			}
+			return ""
+		},
+		false,
+	)
+	if err != nil {
+		t.Fatalf("loadConfiguredAccounts() error = %v", err)
+	}
+
+	want := []string{"blocked@example.com", "news@example.com"}
+	if !slices.Equal(loadedConfig.BlacklistFromAccounts, want) {
+		t.Fatalf("blacklist = %#v, want %#v", loadedConfig.BlacklistFromAccounts, want)
 	}
 }
 

@@ -20,13 +20,14 @@ import (
 const defaultAccountTimeout = 30 * time.Second
 
 type App struct {
-	Accounts    []ConfiguredAccount
-	Delete      func(context.Context, mailbin.Config, mailbin.DeleteCriteria) (mailbin.DeleteResult, error)
-	Timeout     time.Duration
-	Concurrency int
-	DefaultAge  int
-	Now         func() time.Time
-	Output      io.Writer
+	Accounts              []ConfiguredAccount
+	BlacklistFromAccounts []string
+	Delete                func(context.Context, mailbin.Config, mailbin.DeleteCriteria) (mailbin.DeleteResult, error)
+	Timeout               time.Duration
+	Concurrency           int
+	DefaultAge            int
+	Now                   func() time.Time
+	Output                io.Writer
 }
 
 type accountDeleteResult struct {
@@ -100,6 +101,7 @@ func newAppFromFlags() (*App, CronSchedule, error) {
 	}
 
 	var accounts []ConfiguredAccount
+	var blacklistFromAccounts []string
 	if *configPath == "" {
 		password, err := resolvePassword(os.Stdin, os.Stderr, os.Getenv, stdinIsInteractive())
 		if err != nil {
@@ -122,20 +124,23 @@ func newAppFromFlags() (*App, CronSchedule, error) {
 			},
 		}
 	} else {
-		accounts, err = loadConfiguredAccounts(*configPath, *accountName, os.Stdin, os.Stderr, os.Getenv, stdinIsInteractive())
+		loadedConfig, err := loadConfiguredAccounts(*configPath, *accountName, os.Stdin, os.Stderr, os.Getenv, stdinIsInteractive())
 		if err != nil {
 			return nil, CronSchedule{}, err
 		}
+		accounts = loadedConfig.Accounts
+		blacklistFromAccounts = loadedConfig.BlacklistFromAccounts
 	}
 
 	return &App{
-			Accounts:    accounts,
-			Timeout:     *timeout,
-			Concurrency: *concurrency,
-			DefaultAge:  *age,
-			Now:         time.Now,
-			Output:      os.Stdout,
-		}, schedule, nil
+		Accounts:              accounts,
+		BlacklistFromAccounts: blacklistFromAccounts,
+		Timeout:               *timeout,
+		Concurrency:           *concurrency,
+		DefaultAge:            *age,
+		Now:                   time.Now,
+		Output:                os.Stdout,
+	}, schedule, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
@@ -218,12 +223,17 @@ func (a *App) criteriaForAge(age int) (mailbin.DeleteCriteria, error) {
 	}
 
 	now := time.Now
+	var blacklistFromAccounts []string
 	if a != nil && a.Now != nil {
 		now = a.Now
+	}
+	if a != nil && len(a.BlacklistFromAccounts) > 0 {
+		blacklistFromAccounts = append([]string(nil), a.BlacklistFromAccounts...)
 	}
 
 	return mailbin.DeleteCriteria{
 		ReceivedBefore: deleteCutoff(now(), age),
+		FromAccounts:   blacklistFromAccounts,
 	}, nil
 }
 

@@ -1,6 +1,6 @@
 # mailbong
 
-`mailbong` is a CLI utility for deleting old email messages using [`github.com/lechefran/mailbin`](https://github.com/lechefran/mailbin) `v0.1.1`.
+`mailbong` is a CLI utility for deleting old email messages using [`github.com/lechefran/mailbin`](https://github.com/lechefran/mailbin) `v0.1.2`.
 
 ## Run
 
@@ -42,6 +42,9 @@ Supported cron tokens per field:
 ## Accounts Config
 
 Use [`accounts.example.json`](./accounts.example.json) as a template.
+
+The optional top-level `blacklist` list maps to `mailbin.DeleteCriteria.FromAccounts`.
+When configured, messages from those senders match the delete criteria regardless of age.
 
 - `name`: optional display name; defaults to the account email.
 - `email`: required IMAP login email.

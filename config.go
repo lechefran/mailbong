@@ -28,8 +28,14 @@ type ConfiguredAccount struct {
 	Config mailbin.Config
 }
 
+type loadedAccountsConfig struct {
+	Accounts              []ConfiguredAccount
+	BlacklistFromAccounts []string
+}
+
 type accountsConfig struct {
-	Accounts []accountConfig `json:"accounts"`
+	Blacklist []string        `json:"blacklist"`
+	Accounts  []accountConfig `json:"accounts"`
 }
 
 type accountConfig struct {
@@ -51,14 +57,17 @@ func loadConfiguredAccounts(
 	prompt io.Writer,
 	getenv func(string) string,
 	interactive bool,
-) ([]ConfiguredAccount, error) {
+) (loadedAccountsConfig, error) {
 	config, err := readAccountsConfig(configPath)
 	if err != nil {
-		return nil, err
+		return loadedAccountsConfig{}, err
 	}
 
 	selectedAccount = strings.TrimSpace(selectedAccount)
-	accounts := make([]ConfiguredAccount, 0, len(config.Accounts))
+	loaded := loadedAccountsConfig{
+		Accounts:              make([]ConfiguredAccount, 0, len(config.Accounts)),
+		BlacklistFromAccounts: normalizeBlacklistFromAccounts(config.Blacklist),
+	}
 	for _, configured := range config.Accounts {
 		name := strings.TrimSpace(configured.Name)
 		if name == "" {
@@ -70,15 +79,15 @@ func loadConfiguredAccounts(
 
 		address, err := resolveIMAPAddress(configured.Provider, configured.IMAPAddr)
 		if err != nil {
-			return nil, fmt.Errorf("account %q: %w", name, err)
+			return loadedAccountsConfig{}, fmt.Errorf("account %q: %w", name, err)
 		}
 
 		password, err := resolveConfiguredAccountPassword(name, configured.PasswordEnv, input, prompt, getenv, interactive)
 		if err != nil {
-			return nil, fmt.Errorf("account %q: %w", name, err)
+			return loadedAccountsConfig{}, fmt.Errorf("account %q: %w", name, err)
 		}
 
-		accounts = append(accounts, ConfiguredAccount{
+		loaded.Accounts = append(loaded.Accounts, ConfiguredAccount{
 			Name: name,
 			Config: mailbin.Config{
 				Provider: strings.TrimSpace(configured.Provider),
@@ -89,14 +98,14 @@ func loadConfiguredAccounts(
 		})
 	}
 
-	if selectedAccount != "" && len(accounts) == 0 {
-		return nil, fmt.Errorf("account %q was not found in %s", selectedAccount, configPath)
+	if selectedAccount != "" && len(loaded.Accounts) == 0 {
+		return loadedAccountsConfig{}, fmt.Errorf("account %q was not found in %s", selectedAccount, configPath)
 	}
-	if len(accounts) == 0 {
-		return nil, fmt.Errorf("accounts config %q does not define any accounts", configPath)
+	if len(loaded.Accounts) == 0 {
+		return loadedAccountsConfig{}, fmt.Errorf("accounts config %q does not define any accounts", configPath)
 	}
 
-	return accounts, nil
+	return loaded, nil
 }
 
 func readAccountsConfig(configPath string) (*accountsConfig, error) {
@@ -131,6 +140,26 @@ func readAccountsConfig(configPath string) (*accountsConfig, error) {
 	}
 
 	return &config, nil
+}
+
+func normalizeBlacklistFromAccounts(accounts []string) []string {
+	normalized := make([]string, 0, len(accounts))
+	seen := make(map[string]struct{}, len(accounts))
+	for _, account := range accounts {
+		account = strings.TrimSpace(account)
+		if account == "" {
+			continue
+		}
+
+		key := strings.ToLower(account)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, account)
+	}
+
+	return normalized
 }
 
 func resolveConfiguredAccountPassword(

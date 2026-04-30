@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -87,6 +88,37 @@ func TestAppRunBuildsCutoffFromCurrentTime(t *testing.T) {
 	wantCutoff := deleteCutoff(now, 90)
 	if !gotCriteria.ReceivedBefore.Equal(wantCutoff) {
 		t.Fatalf("Run() cutoff = %v, want %v", gotCriteria.ReceivedBefore, wantCutoff)
+	}
+}
+
+func TestAppRunMapsBlacklistToCriteriaFromAccounts(t *testing.T) {
+	var gotCriteria mailbin.DeleteCriteria
+
+	app := &App{
+		Accounts: []ConfiguredAccount{
+			{
+				Name: "gmail",
+				Config: mailbin.Config{
+					Email: "one@example.com",
+				},
+			},
+		},
+		BlacklistFromAccounts: []string{"blocked@example.com", "news@example.com"},
+		DefaultAge:            30,
+		Output:                &bytes.Buffer{},
+		Delete: func(ctx context.Context, config mailbin.Config, criteria mailbin.DeleteCriteria) (mailbin.DeleteResult, error) {
+			gotCriteria = criteria
+			return mailbin.DeleteResult{}, nil
+		},
+	}
+
+	if err := app.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := []string{"blocked@example.com", "news@example.com"}
+	if !slices.Equal(gotCriteria.FromAccounts, want) {
+		t.Fatalf("Run() FromAccounts = %#v, want %#v", gotCriteria.FromAccounts, want)
 	}
 }
 

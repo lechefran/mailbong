@@ -1,4 +1,7 @@
 {
+  "blacklist": [
+    "blocked@example.com"
+  ],
   "accounts": [
     {
       "name": "gmail",
