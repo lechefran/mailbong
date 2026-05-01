@@ -1,6 +1,6 @@
 # mailbong
 
-`mailbong` is a CLI utility for deleting email messages using [`github.com/lechefran/mailbin`](https://github.com/lechefran/mailbin) `v0.1.2` and [`github.com/lechefran/mailban`](https://github.com/lechefran/mailban) `v0.1.0`.
+`mailbong` is a CLI utility for deleting email messages using [`github.com/lechefran/mailbin`](https://github.com/lechefran/mailbin) `v0.1.2` and [`github.com/lechefran/mailban`](https://github.com/lechefran/mailban) `v0.1.2`.
 
 ## Run
 
