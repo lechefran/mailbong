@@ -22,6 +22,7 @@ const defaultAccountTimeout = 30 * time.Second
 type App struct {
 	Accounts              []ConfiguredAccount
 	BlacklistFromAccounts []string
+	AssessSenders         SenderAssessor
 	Delete                func(context.Context, mailbin.Config, mailbin.DeleteCriteria) (mailbin.DeleteResult, error)
 	Timeout               time.Duration
 	Concurrency           int
@@ -144,7 +145,7 @@ func newAppFromFlags() (*App, CronSchedule, error) {
 }
 
 func (a *App) Run(ctx context.Context) error {
-	criteria, err := a.criteriaForAge(a.DefaultAge)
+	criteria, err := a.criteriaForAge(ctx, a.DefaultAge)
 	if err != nil {
 		return err
 	}
@@ -217,7 +218,7 @@ func totalDeletedMessages(results []accountDeleteResult) int {
 	return total
 }
 
-func (a *App) criteriaForAge(age int) (mailbin.DeleteCriteria, error) {
+func (a *App) criteriaForAge(ctx context.Context, age int) (mailbin.DeleteCriteria, error) {
 	if age < 0 {
 		return mailbin.DeleteCriteria{}, fmt.Errorf("age is required and must be 0 or greater")
 	}
@@ -227,8 +228,12 @@ func (a *App) criteriaForAge(age int) (mailbin.DeleteCriteria, error) {
 	if a != nil && a.Now != nil {
 		now = a.Now
 	}
-	if a != nil && len(a.BlacklistFromAccounts) > 0 {
-		blacklistFromAccounts = append([]string(nil), a.BlacklistFromAccounts...)
+	if a != nil {
+		var err error
+		blacklistFromAccounts, err = a.blacklistFromAccounts(ctx)
+		if err != nil {
+			return mailbin.DeleteCriteria{}, err
+		}
 	}
 
 	return mailbin.DeleteCriteria{
@@ -253,10 +258,7 @@ func (a *App) runDelete(ctx context.Context, criteria mailbin.DeleteCriteria) ([
 		deleteAccount = deleteWithClient
 	}
 
-	timeout := a.Timeout
-	if timeout <= 0 {
-		timeout = defaultAccountTimeout
-	}
+	timeout := a.accountTimeout()
 
 	results := make(chan indexedAccountDeleteResult, len(a.Accounts))
 	var sem chan struct{}
@@ -322,6 +324,14 @@ func (a *App) runDelete(ctx context.Context, criteria mailbin.DeleteCriteria) ([
 	}
 
 	return collected, nil
+}
+
+func (a *App) accountTimeout() time.Duration {
+	if a == nil || a.Timeout <= 0 {
+		return defaultAccountTimeout
+	}
+
+	return a.Timeout
 }
 
 func deleteWithClient(ctx context.Context, config mailbin.Config, criteria mailbin.DeleteCriteria) (mailbin.DeleteResult, error) {

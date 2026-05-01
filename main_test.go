@@ -9,22 +9,34 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lechefran/mailban"
 	"github.com/lechefran/mailbin"
 )
+
+func noSenderAssessments(context.Context, mailban.Config) ([]mailban.SenderAssessment, error) {
+	return nil, nil
+}
+
+func testMailConfig(email string) mailbin.Config {
+	return mailbin.Config{
+		Address:  "imap.example.com:993",
+		Email:    email,
+		Password: "secret",
+	}
+}
 
 func TestAppRunWritesDeletedSummariesAndCounts(t *testing.T) {
 	buffer := &bytes.Buffer{}
 	app := &App{
 		Accounts: []ConfiguredAccount{
 			{
-				Name: "gmail",
-				Config: mailbin.Config{
-					Email: "one@example.com",
-				},
+				Name:   "gmail",
+				Config: testMailConfig("one@example.com"),
 			},
 		},
-		DefaultAge: 30,
-		Output:     buffer,
+		DefaultAge:    30,
+		Output:        buffer,
+		AssessSenders: noSenderAssessments,
 		Delete: func(ctx context.Context, config mailbin.Config, criteria mailbin.DeleteCriteria) (mailbin.DeleteResult, error) {
 			return mailbin.DeleteResult{
 				Deleted: []mailbin.MessageSummary{
@@ -64,17 +76,16 @@ func TestAppRunBuildsCutoffFromCurrentTime(t *testing.T) {
 	app := &App{
 		Accounts: []ConfiguredAccount{
 			{
-				Name: "gmail",
-				Config: mailbin.Config{
-					Email: "one@example.com",
-				},
+				Name:   "gmail",
+				Config: testMailConfig("one@example.com"),
 			},
 		},
 		DefaultAge: 90,
 		Now: func() time.Time {
 			return now
 		},
-		Output: &bytes.Buffer{},
+		Output:        &bytes.Buffer{},
+		AssessSenders: noSenderAssessments,
 		Delete: func(ctx context.Context, config mailbin.Config, criteria mailbin.DeleteCriteria) (mailbin.DeleteResult, error) {
 			gotCriteria = criteria
 			return mailbin.DeleteResult{}, nil
@@ -97,15 +108,14 @@ func TestAppRunMapsBlacklistToCriteriaFromAccounts(t *testing.T) {
 	app := &App{
 		Accounts: []ConfiguredAccount{
 			{
-				Name: "gmail",
-				Config: mailbin.Config{
-					Email: "one@example.com",
-				},
+				Name:   "gmail",
+				Config: testMailConfig("one@example.com"),
 			},
 		},
 		BlacklistFromAccounts: []string{"blocked@example.com", "news@example.com"},
 		DefaultAge:            30,
 		Output:                &bytes.Buffer{},
+		AssessSenders:         noSenderAssessments,
 		Delete: func(ctx context.Context, config mailbin.Config, criteria mailbin.DeleteCriteria) (mailbin.DeleteResult, error) {
 			gotCriteria = criteria
 			return mailbin.DeleteResult{}, nil
@@ -130,21 +140,18 @@ func TestAppRunHonorsConcurrencyLimit(t *testing.T) {
 	app := &App{
 		Accounts: []ConfiguredAccount{
 			{
-				Name: "gmail",
-				Config: mailbin.Config{
-					Email: "one@example.com",
-				},
+				Name:   "gmail",
+				Config: testMailConfig("one@example.com"),
 			},
 			{
-				Name: "icloud",
-				Config: mailbin.Config{
-					Email: "two@example.com",
-				},
+				Name:   "icloud",
+				Config: testMailConfig("two@example.com"),
 			},
 		},
-		DefaultAge:  30,
-		Concurrency: 1,
-		Output:      buffer,
+		DefaultAge:    30,
+		Concurrency:   1,
+		Output:        buffer,
+		AssessSenders: noSenderAssessments,
 		Delete: func(ctx context.Context, config mailbin.Config, criteria mailbin.DeleteCriteria) (mailbin.DeleteResult, error) {
 			started <- config.Email
 			<-release
@@ -181,20 +188,17 @@ func TestAppRunAggregatesFailuresInInputOrder(t *testing.T) {
 	app := &App{
 		Accounts: []ConfiguredAccount{
 			{
-				Name: "gmail",
-				Config: mailbin.Config{
-					Email: "one@example.com",
-				},
+				Name:   "gmail",
+				Config: testMailConfig("one@example.com"),
 			},
 			{
-				Name: "icloud",
-				Config: mailbin.Config{
-					Email: "two@example.com",
-				},
+				Name:   "icloud",
+				Config: testMailConfig("two@example.com"),
 			},
 		},
-		DefaultAge: 30,
-		Output:     buffer,
+		DefaultAge:    30,
+		Output:        buffer,
+		AssessSenders: noSenderAssessments,
 		Delete: func(ctx context.Context, config mailbin.Config, criteria mailbin.DeleteCriteria) (mailbin.DeleteResult, error) {
 			if config.Email == "one@example.com" {
 				return mailbin.DeleteResult{}, errors.New("first failed")
@@ -220,14 +224,13 @@ func TestAppRunPreservesPartialDeletesOnFailure(t *testing.T) {
 	app := &App{
 		Accounts: []ConfiguredAccount{
 			{
-				Name: "gmail",
-				Config: mailbin.Config{
-					Email: "one@example.com",
-				},
+				Name:   "gmail",
+				Config: testMailConfig("one@example.com"),
 			},
 		},
-		DefaultAge: 30,
-		Output:     buffer,
+		DefaultAge:    30,
+		Output:        buffer,
+		AssessSenders: noSenderAssessments,
 		Delete: func(ctx context.Context, config mailbin.Config, criteria mailbin.DeleteCriteria) (mailbin.DeleteResult, error) {
 			return mailbin.DeleteResult{
 				Deleted: []mailbin.MessageSummary{
