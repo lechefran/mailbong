@@ -45,6 +45,7 @@ Use [`accounts.example.json`](./accounts.example.json) as a template.
 
 The optional top-level `blacklist` list maps to `mailbin.DeleteCriteria.FromAccounts`.
 Before each delete run, `mailbong` also uses `mailban` to assess senders for each selected account, adds senders with a score of 80 or higher to the same criteria, and fetches IMAP `From` headers in batches of 100.
+Each assessed sender is printed as `mailban: account=<name> | address=<sender> | score=<score> | reasons=<reasons>`.
 Messages from configured or generated blacklist senders match the delete criteria regardless of age.
 
 - `name`: optional display name; defaults to the account email.

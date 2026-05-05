@@ -47,6 +47,9 @@ func (a *App) blacklistFromAccounts(ctx context.Context) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("account %q: assess blacklist senders: %w", account.Name, err)
 		}
+		if err := a.writeMailbanAssessments(account.Name, assessments); err != nil {
+			return nil, fmt.Errorf("account %q: write mailban sender scores: %w", account.Name, err)
+		}
 
 		for _, assessment := range assessments {
 			if assessment.Score < mailbanBlacklistScoreThreshold {
@@ -57,6 +60,46 @@ func (a *App) blacklistFromAccounts(ctx context.Context) ([]string, error) {
 	}
 
 	return normalizeBlacklistFromAccounts(blacklist), nil
+}
+
+func (a *App) writeMailbanAssessments(accountName string, assessments []mailban.SenderAssessment) error {
+	output := a.outputWriter()
+	for _, assessment := range assessments {
+		address := strings.TrimSpace(assessment.Address)
+		if address == "" {
+			address = "-"
+		}
+		reasons := formatMailbanReasons(assessment.Reasons)
+
+		if _, err := fmt.Fprintf(
+			output,
+			"mailban: account=%s | address=%s | score=%d | reasons=%s\n",
+			accountName,
+			address,
+			assessment.Score,
+			reasons,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func formatMailbanReasons(reasons []string) string {
+	formatted := make([]string, 0, len(reasons))
+	for _, reason := range reasons {
+		reason = strings.TrimSpace(reason)
+		if reason == "" {
+			continue
+		}
+		formatted = append(formatted, reason)
+	}
+	if len(formatted) == 0 {
+		return "-"
+	}
+
+	return strings.Join(formatted, "; ")
 }
 
 func assessSendersWithMailbanClient(ctx context.Context, config mailban.Config) ([]mailban.SenderAssessment, error) {

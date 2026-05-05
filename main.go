@@ -155,15 +155,20 @@ func (a *App) Run(ctx context.Context) error {
 		return err
 	}
 
-	output := a.Output
-	if output == nil {
-		output = os.Stdout
-	}
+	output := a.outputWriter()
 	if writeErr := writeDeleteOutput(output, results); writeErr != nil {
 		return writeErr
 	}
 
 	return err
+}
+
+func (a *App) outputWriter() io.Writer {
+	if a == nil || a.Output == nil {
+		return os.Stdout
+	}
+
+	return a.Output
 }
 
 func runOnCronSchedule(ctx context.Context, app *App, now func() time.Time, schedule CronSchedule) error {

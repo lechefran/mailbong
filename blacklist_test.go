@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"slices"
@@ -13,6 +14,7 @@ import (
 )
 
 func TestBlacklistFromAccountsAddsHighScoringMailbanSenders(t *testing.T) {
+	output := &bytes.Buffer{}
 	var gotConfig mailban.Config
 
 	app := &App{
@@ -28,14 +30,15 @@ func TestBlacklistFromAccountsAddsHighScoringMailbanSenders(t *testing.T) {
 		},
 		BlacklistFromAccounts: []string{"manual@example.com", "blocked@example.com"},
 		Timeout:               5 * time.Second,
+		Output:                output,
 		AssessSenders: func(ctx context.Context, config mailban.Config) ([]mailban.SenderAssessment, error) {
 			gotConfig = config
 			return []mailban.SenderAssessment{
 				{Address: "safe@example.com", Score: 0},
-				{Address: " blocked@example.com ", Score: 60},
-				{Address: "suspicious@example.com", Score: 79},
-				{Address: "phish@example.com", Score: mailbanBlacklistScoreThreshold},
-				{Address: "malware@example.com", Score: 100},
+				{Address: " blocked@example.com ", Score: 60, Reasons: []string{"spamhaus dbl: abused legit domain"}},
+				{Address: "suspicious@example.com", Score: 79, Reasons: []string{" stopforumspam: moderate confidence ", ""}},
+				{Address: "phish@example.com", Score: mailbanBlacklistScoreThreshold, Reasons: []string{"spamhaus dbl: phishing domain", "stopforumspam: blacklist=true"}},
+				{Address: "malware@example.com", Score: 100, Reasons: []string{"spamhaus dbl: malware domain"}},
 			}, nil
 		},
 	}
@@ -48,6 +51,17 @@ func TestBlacklistFromAccountsAddsHighScoringMailbanSenders(t *testing.T) {
 	want := []string{"manual@example.com", "blocked@example.com", "phish@example.com", "malware@example.com"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("blacklistFromAccounts() = %#v, want %#v", got, want)
+	}
+	wantOutput := strings.Join([]string{
+		"mailban: account=gmail | address=safe@example.com | score=0 | reasons=-",
+		"mailban: account=gmail | address=blocked@example.com | score=60 | reasons=spamhaus dbl: abused legit domain",
+		"mailban: account=gmail | address=suspicious@example.com | score=79 | reasons=stopforumspam: moderate confidence",
+		"mailban: account=gmail | address=phish@example.com | score=80 | reasons=spamhaus dbl: phishing domain; stopforumspam: blacklist=true",
+		"mailban: account=gmail | address=malware@example.com | score=100 | reasons=spamhaus dbl: malware domain",
+		"",
+	}, "\n")
+	if output.String() != wantOutput {
+		t.Fatalf("mailban output = %q, want %q", output.String(), wantOutput)
 	}
 	if gotConfig.Host != "imap.gmail.example" {
 		t.Fatalf("mailban host = %q, want imap.gmail.example", gotConfig.Host)
@@ -105,5 +119,36 @@ func TestMailbanConfigFromAccountRequiresHostPortAddress(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "parse imap address") {
 		t.Fatalf("mailbanConfigFromAccount() error = %v, want parse imap address", err)
+	}
+}
+
+func TestFormatMailbanReasons(t *testing.T) {
+	testCases := []struct {
+		name    string
+		reasons []string
+		want    string
+	}{
+		{
+			name: "none",
+			want: "-",
+		},
+		{
+			name:    "blank only",
+			reasons: []string{"", "  "},
+			want:    "-",
+		},
+		{
+			name:    "trims and joins",
+			reasons: []string{" one ", "two"},
+			want:    "one; two",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := formatMailbanReasons(testCase.reasons); got != testCase.want {
+				t.Fatalf("formatMailbanReasons() = %q, want %q", got, testCase.want)
+			}
+		})
 	}
 }
