@@ -174,7 +174,6 @@ func resolveConfiguredAccountPassword(
 	if passwordEnv == "" {
 		return resolvePassword(input, prompt, getenv, interactive)
 	}
-
 	if password := getenv(passwordEnv); password != "" {
 		return password, nil
 	}

@@ -21,41 +21,6 @@ import (
 
 const defaultAccountTimeout = 30 * time.Second
 
-type App struct {
-	Accounts              []ConfiguredAccount
-	BlacklistFromAccounts []string
-	Delete                func(context.Context, mailbin.Config, mailbin.DeleteCriteria) (mailbin.DeleteResult, error)
-	Timeout               time.Duration
-	Concurrency           int
-	DefaultAge            int
-	Now                   func() time.Time
-	Output                io.Writer
-}
-
-type accountDeleteResult struct {
-	AccountName string
-	Result      mailbin.DeleteResult
-	Err         error
-}
-
-type indexedAccountDeleteResult struct {
-	Index  int
-	Result accountDeleteResult
-}
-
-type CronSchedule struct {
-	Minute     cronField
-	Hour       cronField
-	DayOfMonth cronField
-	Month      cronField
-	DayOfWeek  cronField
-}
-
-type cronField struct {
-	Any    bool
-	Values map[int]struct{}
-}
-
 func main() {
 	app, schedule, err := newAppFromFlags()
 	if err != nil {
@@ -104,6 +69,7 @@ func newAppFromFlags() (*App, CronSchedule, error) {
 
 	var accounts []ConfiguredAccount
 	var blacklistFromAccounts []string
+	var getEmailAddressesFunc func(context.Context) (EmailsResponse, error)
 	if *configPath == "" {
 		password, err := resolvePassword(os.Stdin, os.Stderr, os.Getenv, stdinIsInteractive())
 		if err != nil {
@@ -133,10 +99,14 @@ func newAppFromFlags() (*App, CronSchedule, error) {
 		accounts = loadedConfig.Accounts
 		blacklistFromAccounts = loadedConfig.BlacklistFromAccounts
 	}
+	if strings.TrimSpace(os.Getenv("GET_ADDR_URL")) != "" {
+		getEmailAddressesFunc = getEmailAddresses
+	}
 
 	return &App{
 		Accounts:              accounts,
 		BlacklistFromAccounts: blacklistFromAccounts,
+		GetEmailAddresses:     getEmailAddressesFunc,
 		Timeout:               *timeout,
 		Concurrency:           *concurrency,
 		DefaultAge:            *age,
@@ -230,17 +200,19 @@ func (a *App) criteriaForAge(ctx context.Context, age int) (mailbin.DeleteCriter
 		now = a.Now
 	}
 	if a != nil {
-		var err error
-		getEmailAddressesRes, err := getEmailAddresses()
-		if err != nil {
-			return mailbin.DeleteCriteria{}, err
+		blacklistFromAccounts = append(blacklistFromAccounts, a.BlacklistFromAccounts...)
+		if a.GetEmailAddresses != nil {
+			getEmailAddressesRes, err := a.GetEmailAddresses(ctx)
+			if err != nil {
+				return mailbin.DeleteCriteria{}, err
+			}
+			blacklistFromAccounts = append(blacklistFromAccounts, getEmailAddressesRes.Addresses...)
 		}
-		blacklistFromAccounts = getEmailAddressesRes.Addresses
 	}
 
 	return mailbin.DeleteCriteria{
 		ReceivedBefore: deleteCutoff(now(), age),
-		FromAccounts:   blacklistFromAccounts,
+		FromAccounts:   normalizeBlacklistFromAccounts(blacklistFromAccounts),
 	}, nil
 }
 
@@ -683,12 +655,17 @@ func envIntOrDefault(key string, fallback int) (int, error) {
 	return parsed, nil
 }
 
-func getEmailAddresses() (EmailsResponse, error) {
+func getEmailAddresses(ctx context.Context) (EmailsResponse, error) {
+	url := strings.TrimSpace(os.Getenv("GET_ADDR_URL"))
+	if url == "" {
+		return EmailsResponse{}, nil
+	}
+
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
 
-	req, err := http.NewRequest(http.MethodGet, os.Getenv("GET_ADDR_URL"), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return EmailsResponse{}, err
 	}
@@ -703,7 +680,7 @@ func getEmailAddresses() (EmailsResponse, error) {
 	defer apiRes.Body.Close()
 
 	if apiRes.StatusCode < 200 || apiRes.StatusCode >= 300 {
-		return EmailsResponse{}, fmt.Errorf("Failed to obtain email addresses: %w", err)
+		return EmailsResponse{}, fmt.Errorf("get email addresses failed: %s", apiRes.Status)
 	}
 
 	var res EmailsResponse
