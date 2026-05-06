@@ -12,7 +12,9 @@ import (
 func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
 	configPath := writeAccountsConfig(t, `{
   "age": 30,
+  "apiKey": "test-api-key",
   "cron": "0 0 * * *",
+  "getEmailAddressesUrl": "https://example.com/getEmailAddresses",
   "accounts": [
     {
       "name": "gmail",
@@ -51,12 +53,20 @@ func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
 	if loadedConfig.Age != 30 {
 		t.Fatalf("age = %d, want 30", loadedConfig.Age)
 	}
+	if loadedConfig.ApiKey != "test-api-key" {
+		t.Fatalf("api key = %q, want test-api-key", loadedConfig.ApiKey)
+	}
+	if loadedConfig.GetEmailAddressesUrl != "https://example.com/getEmailAddresses" {
+		t.Fatalf("get email addresses url = %q, want configured url", loadedConfig.GetEmailAddressesUrl)
+	}
 }
 
 func TestLoadConfiguredAccountsUsesAddressOverride(t *testing.T) {
 	configPath := writeAccountsConfig(t, `{
   "age": 30,
+  "apiKey": "test-api-key",
   "cron": "0 0 * * *",
+  "getEmailAddressesUrl": "https://example.com/getEmailAddresses",
   "accounts": [
     {
       "name": "custom",
@@ -83,7 +93,9 @@ func TestLoadConfiguredAccountsUsesAddressOverride(t *testing.T) {
 func TestLoadConfiguredAccountsIgnoresBlacklistField(t *testing.T) {
 	configPath := writeAccountsConfig(t, `{
   "age": 30,
+  "apiKey": "test-api-key",
   "cron": "0 0 * * *",
+  "getEmailAddressesUrl": "https://example.com/getEmailAddresses",
   "blacklist": [
     "blocked@example.com"
   ],
@@ -117,7 +129,9 @@ func TestLoadConfiguredAccountsRequiresAgeAndCron(t *testing.T) {
 		{
 			name: "missing age",
 			config: `{
+  "apiKey": "test-api-key",
   "cron": "0 0 * * *",
+  "getEmailAddressesUrl": "https://example.com/getEmailAddresses",
   "accounts": [
     {
       "email": "one@example.com",
@@ -132,7 +146,9 @@ func TestLoadConfiguredAccountsRequiresAgeAndCron(t *testing.T) {
 			name: "negative age",
 			config: `{
   "age": -1,
+  "apiKey": "test-api-key",
   "cron": "0 0 * * *",
+  "getEmailAddressesUrl": "https://example.com/getEmailAddresses",
   "accounts": [
     {
       "email": "one@example.com",
@@ -147,10 +163,13 @@ func TestLoadConfiguredAccountsRequiresAgeAndCron(t *testing.T) {
 			name: "missing cron",
 			config: `{
   "age": 30,
+  "apiKey": "test-api-key",
+  "getEmailAddressesUrl": "https://example.com/getEmailAddresses",
   "accounts": [
     {
       "email": "one@example.com",
-      "provider": "gmail"
+      "provider": "gmail",
+      "password": "gmail-secret"
     }
   ]
 }`,
@@ -160,7 +179,9 @@ func TestLoadConfiguredAccountsRequiresAgeAndCron(t *testing.T) {
 			name: "invalid cron",
 			config: `{
   "age": 30,
+  "apiKey": "test-api-key",
   "cron": "0 0 * *",
+  "getEmailAddressesUrl": "https://example.com/getEmailAddresses",
   "accounts": [
     {
       "email": "one@example.com",
@@ -213,11 +234,64 @@ func TestLoadConfiguredAccountsRequiresPassword(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			configPath := writeAccountsConfig(t, `{
   "age": 30,
+  "apiKey": "test-api-key",
   "cron": "0 0 * * *",
+  "getEmailAddressesUrl": "https://example.com/getEmailAddresses",
   "accounts": [
     `+testCase.accountJSON+`
   ]
 }`)
+			_, err := loadConfiguredAccounts(configPath)
+			if err == nil || !strings.Contains(err.Error(), testCase.wantErrorText) {
+				t.Fatalf("loadConfiguredAccounts() error = %v, want %q", err, testCase.wantErrorText)
+			}
+		})
+	}
+}
+
+func TestLoadConfiguredAccountsRequiresEmailAPIConfig(t *testing.T) {
+	testCases := []struct {
+		name          string
+		config        string
+		wantErrorText string
+	}{
+		{
+			name: "missing api key",
+			config: `{
+  "age": 30,
+  "cron": "0 0 * * *",
+  "getEmailAddressesUrl": "https://example.com/getEmailAddresses",
+  "accounts": [
+    {
+      "email": "one@example.com",
+      "provider": "gmail",
+      "password": "gmail-secret"
+    }
+  ]
+}`,
+			wantErrorText: "api key is missing",
+		},
+		{
+			name: "missing get email addresses url",
+			config: `{
+  "age": 30,
+  "apiKey": "test-api-key",
+  "cron": "0 0 * * *",
+  "accounts": [
+    {
+      "email": "one@example.com",
+      "provider": "gmail",
+      "password": "gmail-secret"
+    }
+  ]
+}`,
+			wantErrorText: "get email addresses url is missing",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			configPath := writeAccountsConfig(t, testCase.config)
 			_, err := loadConfiguredAccounts(configPath)
 			if err == nil || !strings.Contains(err.Error(), testCase.wantErrorText) {
 				t.Fatalf("loadConfiguredAccounts() error = %v, want %q", err, testCase.wantErrorText)

@@ -49,8 +49,10 @@ func newAppFromFlags() (*App, CronSchedule, error) {
 	}
 
 	var getEmailAddressesFunc func(context.Context) (EmailsResponse, error)
-	if strings.TrimSpace(os.Getenv("GET_ADDR_URL")) != "" {
-		getEmailAddressesFunc = getEmailAddresses
+	if strings.TrimSpace(loadedConfig.GetEmailAddressesUrl) != "" && strings.TrimSpace(loadedConfig.ApiKey) != "" {
+		getEmailAddressesFunc = func(ctx context.Context) (EmailsResponse, error) {
+			return getEmailAddresses(ctx, loadedConfig.GetEmailAddressesUrl, loadedConfig.ApiKey)
+		}
 	}
 
 	return &App{
@@ -564,8 +566,7 @@ func envOrDefault(key, fallback string) string {
 	return value
 }
 
-func getEmailAddresses(ctx context.Context) (EmailsResponse, error) {
-	url := strings.TrimSpace(os.Getenv("GET_ADDR_URL"))
+func getEmailAddresses(ctx context.Context, url, key string) (EmailsResponse, error) {
 	if url == "" {
 		return EmailsResponse{}, nil
 	}
@@ -580,7 +581,7 @@ func getEmailAddresses(ctx context.Context) (EmailsResponse, error) {
 	}
 
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+os.Getenv("API_KEY"))
+	req.Header.Set("Authorization", "Bearer "+key)
 
 	apiRes, err := client.Do(req)
 	if err != nil {

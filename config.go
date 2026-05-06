@@ -10,15 +10,19 @@ import (
 )
 
 type loadedAccountsConfig struct {
-	Accounts []ConfiguredAccount
-	Age      int
-	Schedule CronSchedule
+	Accounts             []ConfiguredAccount
+	Age                  int
+	ApiKey               string
+	Schedule             CronSchedule
+	GetEmailAddressesUrl string
 }
 
 type accountsConfig struct {
-	Accounts []accountConfig `json:"accounts"`
-	Age      *int            `json:"age"`
-	Cron     string          `json:"cron"`
+	Accounts             []accountConfig `json:"accounts"`
+	Age                  *int            `json:"age"`
+	ApiKey               string          `json:"apiKey"`
+	Cron                 string          `json:"cron"`
+	GetEmailAddressesUrl string          `json:"getEmailAddressesUrl"`
 }
 
 type accountConfig struct {
@@ -32,14 +36,16 @@ type accountConfig struct {
 func loadConfiguredAccounts(
 	configPath string,
 ) (loadedAccountsConfig, error) {
-	config, err := readAccountsConfig(configPath)
+	config, err := readAppConfig(configPath)
 	if err != nil {
 		return loadedAccountsConfig{}, err
 	}
 
 	loaded := loadedAccountsConfig{
-		Accounts: make([]ConfiguredAccount, 0, len(config.Accounts)),
-		Age:      *config.Age,
+		Accounts:             make([]ConfiguredAccount, 0, len(config.Accounts)),
+		Age:                  *config.Age,
+		ApiKey:               config.ApiKey,
+		GetEmailAddressesUrl: config.GetEmailAddressesUrl,
 	}
 	schedule, err := parseCronSchedule(config.Cron)
 	if err != nil {
@@ -76,7 +82,7 @@ func loadConfiguredAccounts(
 	return loaded, nil
 }
 
-func readAccountsConfig(configPath string) (*accountsConfig, error) {
+func readAppConfig(configPath string) (*accountsConfig, error) {
 	contents, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("read accounts config %q: %w", configPath, err)
@@ -84,20 +90,26 @@ func readAccountsConfig(configPath string) (*accountsConfig, error) {
 
 	var config accountsConfig
 	if err := json.Unmarshal(contents, &config); err != nil {
-		return nil, fmt.Errorf("parse accounts config %q: %w", configPath, err)
+		return nil, fmt.Errorf("parse app config %q: %w", configPath, err)
 	}
 
 	if len(config.Accounts) == 0 {
-		return nil, fmt.Errorf("accounts config %q does not define any accounts", configPath)
+		return nil, fmt.Errorf("app config %q does not define any accounts", configPath)
 	}
 	if config.Age == nil {
-		return nil, fmt.Errorf("accounts config %q is missing age", configPath)
+		return nil, fmt.Errorf("app config %q is missing age", configPath)
 	}
 	if *config.Age < 0 {
-		return nil, fmt.Errorf("accounts config %q age must be 0 or greater", configPath)
+		return nil, fmt.Errorf("app config %q age must be 0 or greater", configPath)
+	}
+	if strings.TrimSpace(config.ApiKey) == "" {
+		return nil, fmt.Errorf("app config %q api key is missing", configPath)
 	}
 	if strings.TrimSpace(config.Cron) == "" {
-		return nil, fmt.Errorf("accounts config %q is missing cron", configPath)
+		return nil, fmt.Errorf("app config %q is missing cron", configPath)
+	}
+	if strings.TrimSpace(config.GetEmailAddressesUrl) == "" {
+		return nil, fmt.Errorf("app config %q get email addresses url is missing", configPath)
 	}
 
 	seenNames := make(map[string]struct{}, len(config.Accounts))
