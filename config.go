@@ -9,11 +9,6 @@ import (
 	"github.com/lechefran/mailbin"
 )
 
-type ConfiguredAccount struct {
-	Name   string
-	Config mailbin.Config
-}
-
 type loadedAccountsConfig struct {
 	Accounts []ConfiguredAccount
 	Age      int

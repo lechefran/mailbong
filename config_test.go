@@ -31,7 +31,6 @@ func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
 
 	loadedConfig, err := loadConfiguredAccounts(
 		configPath,
-		"",
 	)
 	if err != nil {
 		t.Fatalf("loadConfiguredAccounts() error = %v", err)
@@ -54,45 +53,6 @@ func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadConfiguredAccountsSelectsOneAccount(t *testing.T) {
-	configPath := writeAccountsConfig(t, `{
-  "age": 30,
-  "cron": "0 0 * * *",
-  "accounts": [
-    {
-      "name": "gmail",
-      "email": "one@example.com",
-      "provider": "gmail",
-      "password": "gmail-secret"
-    },
-    {
-      "name": "icloud",
-      "email": "two@example.com",
-      "provider": "icloud",
-      "password": "icloud-secret"
-    }
-  ]
-}`)
-
-	loadedConfig, err := loadConfiguredAccounts(
-		configPath,
-		"icloud",
-	)
-	if err != nil {
-		t.Fatalf("loadConfiguredAccounts() error = %v", err)
-	}
-	accounts := loadedConfig.Accounts
-	if len(accounts) != 1 {
-		t.Fatalf("loadConfiguredAccounts() count = %d, want 1", len(accounts))
-	}
-	if accounts[0].Name != "icloud" {
-		t.Fatalf("selected account = %q, want icloud", accounts[0].Name)
-	}
-	if accounts[0].Config.Address != string(mailbin.ICLOUD) {
-		t.Fatalf("selected account address = %q, want %q", accounts[0].Config.Address, string(mailbin.ICLOUD))
-	}
-}
-
 func TestLoadConfiguredAccountsUsesAddressOverride(t *testing.T) {
 	configPath := writeAccountsConfig(t, `{
   "age": 30,
@@ -110,7 +70,6 @@ func TestLoadConfiguredAccountsUsesAddressOverride(t *testing.T) {
 
 	loadedConfig, err := loadConfiguredAccounts(
 		configPath,
-		"",
 	)
 	if err != nil {
 		t.Fatalf("loadConfiguredAccounts() error = %v", err)
@@ -140,7 +99,6 @@ func TestLoadConfiguredAccountsIgnoresBlacklistField(t *testing.T) {
 
 	loadedConfig, err := loadConfiguredAccounts(
 		configPath,
-		"",
 	)
 	if err != nil {
 		t.Fatalf("loadConfiguredAccounts() error = %v", err)
@@ -218,7 +176,7 @@ func TestLoadConfiguredAccountsRequiresAgeAndCron(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			configPath := writeAccountsConfig(t, testCase.config)
-			_, err := loadConfiguredAccounts(configPath, "")
+			_, err := loadConfiguredAccounts(configPath)
 			if err == nil || !strings.Contains(err.Error(), testCase.wantErrorText) {
 				t.Fatalf("loadConfiguredAccounts() error = %v, want %q", err, testCase.wantErrorText)
 			}
@@ -260,7 +218,7 @@ func TestLoadConfiguredAccountsRequiresPassword(t *testing.T) {
     `+testCase.accountJSON+`
   ]
 }`)
-			_, err := loadConfiguredAccounts(configPath, "")
+			_, err := loadConfiguredAccounts(configPath)
 			if err == nil || !strings.Contains(err.Error(), testCase.wantErrorText) {
 				t.Fatalf("loadConfiguredAccounts() error = %v, want %q", err, testCase.wantErrorText)
 			}

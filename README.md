@@ -8,12 +8,6 @@
 go run . -config accounts.json
 ```
 
-Run one configured account by name:
-
-```bash
-go run . -config accounts.json -account work
-```
-
 Account email, provider, IMAP address, age, and cron values are loaded only from the JSON config.
 
 The process stays running and triggers at matching times in local time.
@@ -57,14 +51,9 @@ Password resolution for configured accounts:
 ## Configuration flags
 
 - `-config string`: required path to accounts config JSON; defaults from `MAILBIN_CONFIG` when set
-- `-account string`: account name from config to run
-- `-concurrency int`: max concurrent account runs (`0` = unlimited)
-- `-timeout duration`: per-account timeout (default `30s`)
 
 ## Environment variables
 
 - `MAILBIN_CONFIG`
-- `MAILBIN_ACCOUNT`
-- `MAILBIN_CONCURRENCY`
 - `GET_ADDR_URL`
 - `API_KEY`

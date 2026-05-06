@@ -35,7 +35,7 @@ func main() {
 }
 
 func newAppFromFlags() (*App, CronSchedule, error) {
-	configPath := flag.String("config", envOrDefault("config", ""), "path to app config json file")
+	configPath := flag.String("config", envOrDefault("MAILBIN_CONFIG", ""), "path to app config json file")
 	flag.Parse()
 
 	configValue := strings.TrimSpace(*configPath)
@@ -196,10 +196,7 @@ func (a *App) runDelete(ctx context.Context, criteria mailbin.DeleteCriteria) ([
 		deleteAccount = deleteWithClient
 	}
 
-	timeout := a.accountTimeout()
-
 	results := make(chan indexedAccountDeleteResult, len(a.Accounts))
-	var sem chan struct{}
 
 	var wg sync.WaitGroup
 	for index, account := range a.Accounts {
@@ -209,14 +206,8 @@ func (a *App) runDelete(ctx context.Context, criteria mailbin.DeleteCriteria) ([
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if sem != nil {
-				sem <- struct{}{}
-				defer func() {
-					<-sem
-				}()
-			}
 
-			runCtx, cancel := context.WithTimeout(ctx, timeout)
+			runCtx, cancel := context.WithTimeout(ctx, defaultAccountTimeout)
 			defer cancel()
 
 			result, err := deleteAccount(runCtx, account.Config, criteria)
@@ -259,14 +250,6 @@ func (a *App) runDelete(ctx context.Context, criteria mailbin.DeleteCriteria) ([
 	}
 
 	return collected, nil
-}
-
-func (a *App) accountTimeout() time.Duration {
-	if a == nil || a.Timeout <= 0 {
-		return defaultAccountTimeout
-	}
-
-	return a.Timeout
 }
 
 func deleteWithClient(ctx context.Context, config mailbin.Config, criteria mailbin.DeleteCriteria) (mailbin.DeleteResult, error) {
@@ -579,20 +562,6 @@ func envOrDefault(key, fallback string) string {
 	}
 
 	return value
-}
-
-func envIntOrDefault(key string, fallback int) (int, error) {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback, nil
-	}
-
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be an integer: %w", key, err)
-	}
-
-	return parsed, nil
 }
 
 func getEmailAddresses(ctx context.Context) (EmailsResponse, error) {

@@ -12,7 +12,6 @@ type App struct {
 	Accounts          []ConfiguredAccount
 	GetEmailAddresses func(context.Context) (EmailsResponse, error)
 	Delete            func(context.Context, mailbin.Config, mailbin.DeleteCriteria) (mailbin.DeleteResult, error)
-	Timeout           time.Duration
 	DefaultAge        int
 	Now               func() time.Time
 	Output            io.Writer
@@ -43,12 +42,10 @@ type cronField struct {
 }
 
 type EmailsResponse struct {
-	Addresses []string       `json:"addresses"`
-	Status    StatusResponse `json:"status"`
+	Addresses []string `json:"addresses"`
 }
 
-type StatusResponse struct {
-	Code  int    `json:"code"`
-	Title string `json:"title"`
-	Msg   string `json:"message"`
+type ConfiguredAccount struct {
+	Name   string
+	Config mailbin.Config
 }

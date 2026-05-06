@@ -132,56 +132,6 @@ func TestAppRunMapsFetchedBlacklistToCriteriaFromAccounts(t *testing.T) {
 	}
 }
 
-func TestAppRunHonorsConcurrencyLimit(t *testing.T) {
-	started := make(chan string, 2)
-	release := make(chan struct{})
-	buffer := &bytes.Buffer{}
-
-	app := &App{
-		Accounts: []ConfiguredAccount{
-			{
-				Name:   "gmail",
-				Config: testMailConfig("one@example.com"),
-			},
-			{
-				Name:   "icloud",
-				Config: testMailConfig("two@example.com"),
-			},
-		},
-		DefaultAge:  30,
-		Concurrency: 1,
-		Output:      buffer,
-		Delete: func(ctx context.Context, config mailbin.Config, criteria mailbin.DeleteCriteria) (mailbin.DeleteResult, error) {
-			started <- config.Email
-			<-release
-			return mailbin.DeleteResult{}, nil
-		},
-	}
-
-	errs := make(chan error, 1)
-	go func() {
-		errs <- app.Run(context.Background())
-	}()
-
-	first := <-started
-	select {
-	case second := <-started:
-		t.Fatalf("started accounts = %q and %q, want only one before release", first, second)
-	case <-time.After(100 * time.Millisecond):
-	}
-
-	close(release)
-
-	second := <-started
-	if first == second {
-		t.Fatalf("started accounts = %q and %q, want distinct accounts", first, second)
-	}
-
-	if err := <-errs; err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-}
-
 func TestAppRunAggregatesFailuresInInputOrder(t *testing.T) {
 	buffer := &bytes.Buffer{}
 	app := &App{
