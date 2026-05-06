@@ -18,7 +18,7 @@ config*.local.*
 accounts.json
 
 # Repository-local skills
-skills/
+skills.md
 
 # Repository-local agents
 agents.md

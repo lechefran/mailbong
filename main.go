@@ -24,7 +24,6 @@ const defaultAccountTimeout = 30 * time.Second
 type App struct {
 	Accounts              []ConfiguredAccount
 	BlacklistFromAccounts []string
-	AssessSenders         SenderAssessor
 	Delete                func(context.Context, mailbin.Config, mailbin.DeleteCriteria) (mailbin.DeleteResult, error)
 	Timeout               time.Duration
 	Concurrency           int
