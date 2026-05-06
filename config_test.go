@@ -1,67 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lechefran/mailbin"
 )
-
-func TestResolveIMAPAddress(t *testing.T) {
-	testCases := []struct {
-		name          string
-		provider      string
-		address       string
-		wantAddress   string
-		wantErrorText string
-	}{
-		{
-			name:        "provider default",
-			provider:    "gmail",
-			wantAddress: string(GMAIL),
-		},
-		{
-			name:        "provider alias",
-			provider:    "office365",
-			wantAddress: string(OUTLOOK),
-		},
-		{
-			name:        "address override wins",
-			provider:    "gmail",
-			address:     "imap.custom.example:993",
-			wantAddress: "imap.custom.example:993",
-		},
-		{
-			name:          "missing provider and address",
-			wantErrorText: "imap address or provider is required",
-		},
-		{
-			name:          "unsupported provider",
-			provider:      "fastmail",
-			wantErrorText: `unsupported provider "fastmail"`,
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			address, err := resolveIMAPAddress(testCase.provider, testCase.address)
-			if testCase.wantErrorText != "" {
-				if err == nil || !strings.Contains(err.Error(), testCase.wantErrorText) {
-					t.Fatalf("resolveIMAPAddress() error = %v, want %q", err, testCase.wantErrorText)
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("resolveIMAPAddress() error = %v", err)
-			}
-			if address != testCase.wantAddress {
-				t.Fatalf("resolveIMAPAddress() = %q, want %q", address, testCase.wantAddress)
-			}
-		})
-	}
-}
 
 func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
 	configPath := writeAccountsConfig(t, `{
@@ -72,13 +18,13 @@ func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
       "name": "gmail",
       "email": "one@example.com",
       "provider": "gmail",
-      "password_env": "MAILBIN_GMAIL_PASSWORD"
+      "password": "gmail-secret"
     },
     {
       "name": "icloud",
       "email": "two@example.com",
       "provider": "icloud",
-      "password_env": "MAILBIN_ICLOUD_PASSWORD"
+      "password": "icloud-secret"
     }
   ]
 }`)
@@ -86,19 +32,6 @@ func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
 	loadedConfig, err := loadConfiguredAccounts(
 		configPath,
 		"",
-		strings.NewReader(""),
-		&bytes.Buffer{},
-		func(key string) string {
-			switch key {
-			case "MAILBIN_GMAIL_PASSWORD":
-				return "gmail-secret"
-			case "MAILBIN_ICLOUD_PASSWORD":
-				return "icloud-secret"
-			default:
-				return ""
-			}
-		},
-		false,
 	)
 	if err != nil {
 		t.Fatalf("loadConfiguredAccounts() error = %v", err)
@@ -107,14 +40,14 @@ func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
 	if len(accounts) != 2 {
 		t.Fatalf("loadConfiguredAccounts() count = %d, want 2", len(accounts))
 	}
-	if accounts[0].Config.Address != string(GMAIL) {
-		t.Fatalf("first account address = %q, want %q", accounts[0].Config.Address, string(GMAIL))
+	if accounts[0].Config.Address != string(mailbin.GMAIL) {
+		t.Fatalf("first account address = %q, want %q", accounts[0].Config.Address, string(mailbin.GMAIL))
 	}
-	if accounts[1].Config.Address != string(ICLOUD) {
-		t.Fatalf("second account address = %q, want %q", accounts[1].Config.Address, string(ICLOUD))
+	if accounts[1].Config.Address != string(mailbin.ICLOUD) {
+		t.Fatalf("second account address = %q, want %q", accounts[1].Config.Address, string(mailbin.ICLOUD))
 	}
 	if accounts[0].Config.Password != "gmail-secret" || accounts[1].Config.Password != "icloud-secret" {
-		t.Fatalf("account passwords = %#v, want provider env passwords", accounts)
+		t.Fatalf("account passwords = %#v, want configured passwords", accounts)
 	}
 	if loadedConfig.Age != 30 {
 		t.Fatalf("age = %d, want 30", loadedConfig.Age)
@@ -130,13 +63,13 @@ func TestLoadConfiguredAccountsSelectsOneAccount(t *testing.T) {
       "name": "gmail",
       "email": "one@example.com",
       "provider": "gmail",
-      "password_env": "MAILBIN_GMAIL_PASSWORD"
+      "password": "gmail-secret"
     },
     {
       "name": "icloud",
       "email": "two@example.com",
       "provider": "icloud",
-      "password_env": "MAILBIN_ICLOUD_PASSWORD"
+      "password": "icloud-secret"
     }
   ]
 }`)
@@ -144,15 +77,6 @@ func TestLoadConfiguredAccountsSelectsOneAccount(t *testing.T) {
 	loadedConfig, err := loadConfiguredAccounts(
 		configPath,
 		"icloud",
-		strings.NewReader(""),
-		&bytes.Buffer{},
-		func(key string) string {
-			if key == "MAILBIN_ICLOUD_PASSWORD" {
-				return "icloud-secret"
-			}
-			return ""
-		},
-		false,
 	)
 	if err != nil {
 		t.Fatalf("loadConfiguredAccounts() error = %v", err)
@@ -164,8 +88,8 @@ func TestLoadConfiguredAccountsSelectsOneAccount(t *testing.T) {
 	if accounts[0].Name != "icloud" {
 		t.Fatalf("selected account = %q, want icloud", accounts[0].Name)
 	}
-	if accounts[0].Config.Address != string(ICLOUD) {
-		t.Fatalf("selected account address = %q, want %q", accounts[0].Config.Address, string(ICLOUD))
+	if accounts[0].Config.Address != string(mailbin.ICLOUD) {
+		t.Fatalf("selected account address = %q, want %q", accounts[0].Config.Address, string(mailbin.ICLOUD))
 	}
 }
 
@@ -179,7 +103,7 @@ func TestLoadConfiguredAccountsUsesAddressOverride(t *testing.T) {
       "email": "custom@example.com",
       "provider": "gmail",
       "imap_addr": "imap.custom.example:993",
-      "password_env": "MAILBIN_CUSTOM_PASSWORD"
+      "password": "custom-secret"
     }
   ]
 }`)
@@ -187,15 +111,6 @@ func TestLoadConfiguredAccountsUsesAddressOverride(t *testing.T) {
 	loadedConfig, err := loadConfiguredAccounts(
 		configPath,
 		"",
-		strings.NewReader(""),
-		&bytes.Buffer{},
-		func(key string) string {
-			if key == "MAILBIN_CUSTOM_PASSWORD" {
-				return "custom-secret"
-			}
-			return ""
-		},
-		false,
 	)
 	if err != nil {
 		t.Fatalf("loadConfiguredAccounts() error = %v", err)
@@ -218,7 +133,7 @@ func TestLoadConfiguredAccountsIgnoresBlacklistField(t *testing.T) {
       "name": "gmail",
       "email": "one@example.com",
       "provider": "gmail",
-      "password_env": "MAILBIN_GMAIL_PASSWORD"
+      "password": "gmail-secret"
     }
   ]
 }`)
@@ -226,15 +141,6 @@ func TestLoadConfiguredAccountsIgnoresBlacklistField(t *testing.T) {
 	loadedConfig, err := loadConfiguredAccounts(
 		configPath,
 		"",
-		strings.NewReader(""),
-		&bytes.Buffer{},
-		func(key string) string {
-			if key == "MAILBIN_GMAIL_PASSWORD" {
-				return "gmail-secret"
-			}
-			return ""
-		},
-		false,
 	)
 	if err != nil {
 		t.Fatalf("loadConfiguredAccounts() error = %v", err)
@@ -257,7 +163,8 @@ func TestLoadConfiguredAccountsRequiresAgeAndCron(t *testing.T) {
   "accounts": [
     {
       "email": "one@example.com",
-      "provider": "gmail"
+      "provider": "gmail",
+      "password": "gmail-secret"
     }
   ]
 }`,
@@ -271,7 +178,8 @@ func TestLoadConfiguredAccountsRequiresAgeAndCron(t *testing.T) {
   "accounts": [
     {
       "email": "one@example.com",
-      "provider": "gmail"
+      "provider": "gmail",
+      "password": "gmail-secret"
     }
   ]
 }`,
@@ -298,7 +206,8 @@ func TestLoadConfiguredAccountsRequiresAgeAndCron(t *testing.T) {
   "accounts": [
     {
       "email": "one@example.com",
-      "provider": "gmail"
+      "provider": "gmail",
+      "password": "gmail-secret"
     }
   ]
 }`,
@@ -309,14 +218,49 @@ func TestLoadConfiguredAccountsRequiresAgeAndCron(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			configPath := writeAccountsConfig(t, testCase.config)
-			_, err := loadConfiguredAccounts(
-				configPath,
-				"",
-				strings.NewReader(""),
-				&bytes.Buffer{},
-				func(string) string { return "" },
-				false,
-			)
+			_, err := loadConfiguredAccounts(configPath, "")
+			if err == nil || !strings.Contains(err.Error(), testCase.wantErrorText) {
+				t.Fatalf("loadConfiguredAccounts() error = %v, want %q", err, testCase.wantErrorText)
+			}
+		})
+	}
+}
+
+func TestLoadConfiguredAccountsRequiresPassword(t *testing.T) {
+	testCases := []struct {
+		name          string
+		accountJSON   string
+		wantErrorText string
+	}{
+		{
+			name: "missing password",
+			accountJSON: `{
+      "email": "one@example.com",
+      "provider": "gmail"
+    }`,
+			wantErrorText: "missing password",
+		},
+		{
+			name: "blank password",
+			accountJSON: `{
+      "email": "one@example.com",
+      "provider": "gmail",
+      "password": " "
+    }`,
+			wantErrorText: "missing password",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			configPath := writeAccountsConfig(t, `{
+  "age": 30,
+  "cron": "0 0 * * *",
+  "accounts": [
+    `+testCase.accountJSON+`
+  ]
+}`)
+			_, err := loadConfiguredAccounts(configPath, "")
 			if err == nil || !strings.Contains(err.Error(), testCase.wantErrorText) {
 				t.Fatalf("loadConfiguredAccounts() error = %v, want %q", err, testCase.wantErrorText)
 			}

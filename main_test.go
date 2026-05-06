@@ -252,66 +252,6 @@ func TestAppRunPreservesPartialDeletesOnFailure(t *testing.T) {
 	}
 }
 
-func TestResolvePassword(t *testing.T) {
-	testCases := []struct {
-		name          string
-		input         string
-		envValue      string
-		interactive   bool
-		wantPassword  string
-		wantPrompt    string
-		wantErrorText string
-	}{
-		{
-			name:         "uses env password",
-			envValue:     "env-secret",
-			interactive:  false,
-			wantPassword: "env-secret",
-		},
-		{
-			name:         "prompts on interactive stdin",
-			input:        "typed-secret\n",
-			interactive:  true,
-			wantPassword: "typed-secret",
-			wantPrompt:   "Enter IMAP password: ",
-		},
-		{
-			name:          "errors on non interactive stdin",
-			interactive:   false,
-			wantErrorText: "MAILBIN_PASSWORD is required",
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			prompt := &bytes.Buffer{}
-			password, err := resolvePassword(
-				strings.NewReader(testCase.input),
-				prompt,
-				func(string) string { return testCase.envValue },
-				testCase.interactive,
-			)
-
-			if testCase.wantErrorText != "" {
-				if err == nil || !strings.Contains(err.Error(), testCase.wantErrorText) {
-					t.Fatalf("resolvePassword() error = %v, want %q", err, testCase.wantErrorText)
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("resolvePassword() error = %v", err)
-			}
-			if password != testCase.wantPassword {
-				t.Fatalf("resolvePassword() password = %q, want %q", password, testCase.wantPassword)
-			}
-			if prompt.String() != testCase.wantPrompt {
-				t.Fatalf("resolvePassword() prompt = %q, want %q", prompt.String(), testCase.wantPrompt)
-			}
-		})
-	}
-}
-
 func TestParseCronSchedule(t *testing.T) {
 	testCases := []struct {
 		name      string

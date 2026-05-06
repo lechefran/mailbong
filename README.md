@@ -5,14 +5,13 @@
 ## Run
 
 ```bash
-MAILBIN_PASSWORD='app-password' go run . \
-  -config accounts.json
+go run . -config accounts.json
 ```
 
 Run one configured account by name:
 
 ```bash
-MAILBIN_PASSWORD='app-password' go run . -config accounts.json -account work
+go run . -config accounts.json -account work
 ```
 
 Account email, provider, IMAP address, age, and cron values are loaded only from the JSON config.
@@ -48,14 +47,12 @@ Messages from fetched blacklist senders match the delete criteria regardless of 
 - `email`: required IMAP login email.
 - `provider`: optional provider key for built-in IMAP defaults (`gmail`, `icloud`, `outlook`, `yahoo`, `aol`, `aol_export`, `zoho`).
 - `imap_addr`: optional explicit IMAP address in `host:port` format.
-- `password_env`: optional env var name for this account's password.
+- `password`: required IMAP password or app password.
 
 Password resolution for configured accounts:
 
-- use `password_env` if set and present
-- otherwise fallback to `MAILBIN_PASSWORD`
-- if stdin is interactive, prompt for password
-- if stdin is non-interactive and no password env is available, exit with an error
+- use the `password` value from the JSON config
+- keep config files that contain real passwords out of git
 
 ## Configuration flags
 
@@ -69,6 +66,5 @@ Password resolution for configured accounts:
 - `MAILBIN_CONFIG`
 - `MAILBIN_ACCOUNT`
 - `MAILBIN_CONCURRENCY`
-- `MAILBIN_PASSWORD`
 - `GET_ADDR_URL`
 - `API_KEY`

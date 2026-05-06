@@ -54,7 +54,7 @@ func newAppFromFlags() (*App, CronSchedule, error) {
 		return nil, CronSchedule{}, fmt.Errorf("config flag is required")
 	}
 
-	loadedConfig, err := loadConfiguredAccounts(configValue, *accountName, os.Stdin, os.Stderr, os.Getenv, stdinIsInteractive())
+	loadedConfig, err := loadConfiguredAccounts(configValue, *accountName)
 	if err != nil {
 		return nil, CronSchedule{}, err
 	}
@@ -171,6 +171,26 @@ func (a *App) criteriaForAge(ctx context.Context, age int) (mailbin.DeleteCriter
 		ReceivedBefore: deleteCutoff(now(), age),
 		FromAccounts:   normalizeBlacklistFromAccounts(blacklistFromAccounts),
 	}, nil
+}
+
+func normalizeBlacklistFromAccounts(accounts []string) []string {
+	normalized := make([]string, 0, len(accounts))
+	seen := make(map[string]struct{}, len(accounts))
+	for _, account := range accounts {
+		account = strings.TrimSpace(account)
+		if account == "" {
+			continue
+		}
+
+		key := strings.ToLower(account)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, account)
+	}
+
+	return normalized
 }
 
 func (a *App) runDelete(ctx context.Context, criteria mailbin.DeleteCriteria) ([]accountDeleteResult, error) {
@@ -367,27 +387,6 @@ func failedAccountCount(results []accountDeleteResult) int {
 	}
 
 	return failed
-}
-
-func resolvePassword(input io.Reader, prompt io.Writer, getenv func(string) string, interactive bool) (string, error) {
-	if password := getenv("MAILBIN_PASSWORD"); password != "" {
-		return password, nil
-	}
-
-	if !interactive {
-		return "", fmt.Errorf("MAILBIN_PASSWORD is required when stdin is not interactive")
-	}
-
-	return promptPassword(input, prompt, "Enter IMAP password: ")
-}
-
-func stdinIsInteractive() bool {
-	info, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-
-	return info.Mode()&os.ModeCharDevice != 0
 }
 
 func defaultAccountName(email string) string {

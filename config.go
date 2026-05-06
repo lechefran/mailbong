@@ -1,26 +1,12 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
 	"github.com/lechefran/mailbin"
-)
-
-type ADDR string
-
-const (
-	AOL        ADDR = mailbin.AOL
-	AOL_EXPORT ADDR = mailbin.AOL_EXPORT
-	GMAIL      ADDR = mailbin.GMAIL
-	ICLOUD     ADDR = mailbin.ICLOUD
-	OUTLOOK    ADDR = mailbin.OUTLOOK
-	YAHOO      ADDR = mailbin.YAHOO
-	ZOHO       ADDR = mailbin.ZOHO
 )
 
 type ConfiguredAccount struct {
@@ -41,24 +27,16 @@ type accountsConfig struct {
 }
 
 type accountConfig struct {
-	Name        string `json:"name"`
-	Email       string `json:"email"`
-	Provider    string `json:"provider"`
-	IMAPAddr    string `json:"imap_addr"`
-	PasswordEnv string `json:"password_env"`
-}
-
-func resolveIMAPAddress(provider string, address string) (string, error) {
-	return mailbin.ResolveIMAPAddress(provider, address)
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	Provider string `json:"provider"`
+	IMAPAddr string `json:"imap_addr"`
+	Password string `json:"password"`
 }
 
 func loadConfiguredAccounts(
 	configPath string,
 	selectedAccount string,
-	input io.Reader,
-	prompt io.Writer,
-	getenv func(string) string,
-	interactive bool,
 ) (loadedAccountsConfig, error) {
 	config, err := readAccountsConfig(configPath)
 	if err != nil {
@@ -85,12 +63,7 @@ func loadConfiguredAccounts(
 			continue
 		}
 
-		address, err := resolveIMAPAddress(configured.Provider, configured.IMAPAddr)
-		if err != nil {
-			return loadedAccountsConfig{}, fmt.Errorf("account %q: %w", name, err)
-		}
-
-		password, err := resolveConfiguredAccountPassword(name, configured.PasswordEnv, input, prompt, getenv, interactive)
+		address, err := mailbin.ResolveIMAPAddress(configured.Provider, configured.IMAPAddr)
 		if err != nil {
 			return loadedAccountsConfig{}, fmt.Errorf("account %q: %w", name, err)
 		}
@@ -101,7 +74,7 @@ func loadConfiguredAccounts(
 				Provider: strings.TrimSpace(configured.Provider),
 				Address:  address,
 				Email:    strings.TrimSpace(configured.Email),
-				Password: password,
+				Password: configured.Password,
 			},
 		})
 	}
@@ -145,6 +118,9 @@ func readAccountsConfig(configPath string) (*accountsConfig, error) {
 		if strings.TrimSpace(account.Email) == "" {
 			return nil, fmt.Errorf("account %d is missing email", index+1)
 		}
+		if strings.TrimSpace(account.Password) == "" {
+			return nil, fmt.Errorf("account %d is missing password", index+1)
+		}
 
 		name := strings.TrimSpace(account.Name)
 		if name == "" {
@@ -157,74 +133,4 @@ func readAccountsConfig(configPath string) (*accountsConfig, error) {
 	}
 
 	return &config, nil
-}
-
-func normalizeBlacklistFromAccounts(accounts []string) []string {
-	normalized := make([]string, 0, len(accounts))
-	seen := make(map[string]struct{}, len(accounts))
-	for _, account := range accounts {
-		account = strings.TrimSpace(account)
-		if account == "" {
-			continue
-		}
-
-		key := strings.ToLower(account)
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		normalized = append(normalized, account)
-	}
-
-	return normalized
-}
-
-func resolveConfiguredAccountPassword(
-	accountName string,
-	passwordEnv string,
-	input io.Reader,
-	prompt io.Writer,
-	getenv func(string) string,
-	interactive bool,
-) (string, error) {
-	passwordEnv = strings.TrimSpace(passwordEnv)
-	if passwordEnv == "" {
-		return resolvePassword(input, prompt, getenv, interactive)
-	}
-	if password := getenv(passwordEnv); password != "" {
-		return password, nil
-	}
-	if password := getenv("MAILBIN_PASSWORD"); password != "" {
-		return password, nil
-	}
-	if !interactive {
-		return "", fmt.Errorf("%s is required when stdin is not interactive", passwordEnv)
-	}
-
-	return promptPassword(
-		input,
-		prompt,
-		fmt.Sprintf("Enter IMAP password for %s: ", accountName),
-	)
-}
-
-func promptPassword(input io.Reader, prompt io.Writer, promptText string) (string, error) {
-	if prompt != nil {
-		if _, err := fmt.Fprint(prompt, promptText); err != nil {
-			return "", fmt.Errorf("write password prompt: %w", err)
-		}
-	}
-
-	reader := bufio.NewReader(input)
-	password, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return "", fmt.Errorf("read password: %w", err)
-	}
-
-	value := strings.TrimRight(password, "\r\n")
-	if value == "" {
-		return "", fmt.Errorf("password is required")
-	}
-
-	return value, nil
 }
