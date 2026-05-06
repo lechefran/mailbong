@@ -95,7 +95,7 @@ func TestAppRunBuildsCutoffFromCurrentTime(t *testing.T) {
 	}
 }
 
-func TestAppRunMapsBlacklistToCriteriaFromAccounts(t *testing.T) {
+func TestAppRunMapsFetchedBlacklistToCriteriaFromAccounts(t *testing.T) {
 	var gotCriteria mailbin.DeleteCriteria
 
 	app := &App{
@@ -105,41 +105,12 @@ func TestAppRunMapsBlacklistToCriteriaFromAccounts(t *testing.T) {
 				Config: testMailConfig("one@example.com"),
 			},
 		},
-		BlacklistFromAccounts: []string{"blocked@example.com", "news@example.com"},
-		DefaultAge:            30,
-		Output:                &bytes.Buffer{},
-		Delete: func(ctx context.Context, config mailbin.Config, criteria mailbin.DeleteCriteria) (mailbin.DeleteResult, error) {
-			gotCriteria = criteria
-			return mailbin.DeleteResult{}, nil
-		},
-	}
-
-	if err := app.Run(context.Background()); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	want := []string{"blocked@example.com", "news@example.com"}
-	if !slices.Equal(gotCriteria.FromAccounts, want) {
-		t.Fatalf("Run() FromAccounts = %#v, want %#v", gotCriteria.FromAccounts, want)
-	}
-}
-
-func TestAppRunMergesConfiguredAndFetchedBlacklist(t *testing.T) {
-	var gotCriteria mailbin.DeleteCriteria
-
-	app := &App{
-		Accounts: []ConfiguredAccount{
-			{
-				Name:   "gmail",
-				Config: testMailConfig("one@example.com"),
-			},
-		},
-		BlacklistFromAccounts: []string{"blocked@example.com", "news@example.com"},
 		GetEmailAddresses: func(ctx context.Context) (EmailsResponse, error) {
 			return EmailsResponse{
 				Addresses: []string{
 					" fetched@example.com ",
 					"BLOCKED@example.com",
+					"blocked@example.com",
 				},
 			}, nil
 		},
@@ -155,7 +126,7 @@ func TestAppRunMergesConfiguredAndFetchedBlacklist(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	want := []string{"blocked@example.com", "news@example.com", "fetched@example.com"}
+	want := []string{"fetched@example.com", "BLOCKED@example.com"}
 	if !slices.Equal(gotCriteria.FromAccounts, want) {
 		t.Fatalf("Run() FromAccounts = %#v, want %#v", gotCriteria.FromAccounts, want)
 	}

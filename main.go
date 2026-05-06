@@ -68,7 +68,6 @@ func newAppFromFlags() (*App, CronSchedule, error) {
 	}
 
 	var accounts []ConfiguredAccount
-	var blacklistFromAccounts []string
 	var getEmailAddressesFunc func(context.Context) (EmailsResponse, error)
 	if *configPath == "" {
 		password, err := resolvePassword(os.Stdin, os.Stderr, os.Getenv, stdinIsInteractive())
@@ -97,21 +96,19 @@ func newAppFromFlags() (*App, CronSchedule, error) {
 			return nil, CronSchedule{}, err
 		}
 		accounts = loadedConfig.Accounts
-		blacklistFromAccounts = loadedConfig.BlacklistFromAccounts
 	}
 	if strings.TrimSpace(os.Getenv("GET_ADDR_URL")) != "" {
 		getEmailAddressesFunc = getEmailAddresses
 	}
 
 	return &App{
-		Accounts:              accounts,
-		BlacklistFromAccounts: blacklistFromAccounts,
-		GetEmailAddresses:     getEmailAddressesFunc,
-		Timeout:               *timeout,
-		Concurrency:           *concurrency,
-		DefaultAge:            *age,
-		Now:                   time.Now,
-		Output:                os.Stdout,
+		Accounts:          accounts,
+		GetEmailAddresses: getEmailAddressesFunc,
+		Timeout:           *timeout,
+		Concurrency:       *concurrency,
+		DefaultAge:        *age,
+		Now:               time.Now,
+		Output:            os.Stdout,
 	}, schedule, nil
 }
 
@@ -199,15 +196,12 @@ func (a *App) criteriaForAge(ctx context.Context, age int) (mailbin.DeleteCriter
 	if a != nil && a.Now != nil {
 		now = a.Now
 	}
-	if a != nil {
-		blacklistFromAccounts = append(blacklistFromAccounts, a.BlacklistFromAccounts...)
-		if a.GetEmailAddresses != nil {
-			getEmailAddressesRes, err := a.GetEmailAddresses(ctx)
-			if err != nil {
-				return mailbin.DeleteCriteria{}, err
-			}
-			blacklistFromAccounts = append(blacklistFromAccounts, getEmailAddressesRes.Addresses...)
+	if a != nil && a.GetEmailAddresses != nil {
+		getEmailAddressesRes, err := a.GetEmailAddresses(ctx)
+		if err != nil {
+			return mailbin.DeleteCriteria{}, err
 		}
+		blacklistFromAccounts = append(blacklistFromAccounts, getEmailAddressesRes.Addresses...)
 	}
 
 	return mailbin.DeleteCriteria{

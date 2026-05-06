@@ -43,9 +43,8 @@ Supported cron tokens per field:
 
 Use [`accounts.example.json`](./accounts.example.json) as a template.
 
-The optional top-level `blacklist` list maps to `mailbin.DeleteCriteria.FromAccounts`.
-When `GET_ADDR_URL` is set, `mailbong` also fetches additional blacklist addresses from that JSON API before each delete run.
-Messages from configured or fetched blacklist senders match the delete criteria regardless of age.
+When `GET_ADDR_URL` is set, `mailbong` fetches blacklist addresses from that JSON API before each delete run.
+Messages from fetched blacklist senders match the delete criteria regardless of age.
 
 - `name`: optional display name; defaults to the account email.
 - `email`: required IMAP login email.

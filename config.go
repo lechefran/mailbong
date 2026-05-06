@@ -29,13 +29,11 @@ type ConfiguredAccount struct {
 }
 
 type loadedAccountsConfig struct {
-	Accounts              []ConfiguredAccount
-	BlacklistFromAccounts []string
+	Accounts []ConfiguredAccount
 }
 
 type accountsConfig struct {
-	Blacklist []string        `json:"blacklist"`
-	Accounts  []accountConfig `json:"accounts"`
+	Accounts []accountConfig `json:"accounts"`
 }
 
 type accountConfig struct {
@@ -65,8 +63,7 @@ func loadConfiguredAccounts(
 
 	selectedAccount = strings.TrimSpace(selectedAccount)
 	loaded := loadedAccountsConfig{
-		Accounts:              make([]ConfiguredAccount, 0, len(config.Accounts)),
-		BlacklistFromAccounts: normalizeBlacklistFromAccounts(config.Blacklist),
+		Accounts: make([]ConfiguredAccount, 0, len(config.Accounts)),
 	}
 	for _, configured := range config.Accounts {
 		name := strings.TrimSpace(configured.Name)

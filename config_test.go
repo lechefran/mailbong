@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -198,13 +197,10 @@ func TestLoadConfiguredAccountsUsesAddressOverride(t *testing.T) {
 	}
 }
 
-func TestLoadConfiguredAccountsReadsBlacklistFromAccounts(t *testing.T) {
+func TestLoadConfiguredAccountsIgnoresBlacklistField(t *testing.T) {
 	configPath := writeAccountsConfig(t, `{
   "blacklist": [
-    " blocked@example.com ",
-    "",
-    "BLOCKED@example.com",
-    "news@example.com"
+    "blocked@example.com"
   ],
   "accounts": [
     {
@@ -232,10 +228,8 @@ func TestLoadConfiguredAccountsReadsBlacklistFromAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfiguredAccounts() error = %v", err)
 	}
-
-	want := []string{"blocked@example.com", "news@example.com"}
-	if !slices.Equal(loadedConfig.BlacklistFromAccounts, want) {
-		t.Fatalf("blacklist = %#v, want %#v", loadedConfig.BlacklistFromAccounts, want)
+	if len(loadedConfig.Accounts) != 1 {
+		t.Fatalf("loadConfiguredAccounts() count = %d, want 1", len(loadedConfig.Accounts))
 	}
 }
 
