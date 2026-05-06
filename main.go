@@ -35,26 +35,15 @@ func main() {
 }
 
 func newAppFromFlags() (*App, CronSchedule, error) {
-	configPath := flag.String("config", envOrDefault("MAILBIN_CONFIG", ""), "path to accounts config JSON")
-	accountName := flag.String("account", envOrDefault("MAILBIN_ACCOUNT", ""), "account name from config to run")
-	concurrencyDefault, err := envIntOrDefault("MAILBIN_CONCURRENCY", 0)
-	if err != nil {
-		return nil, CronSchedule{}, err
-	}
-	concurrency := flag.Int("concurrency", concurrencyDefault, "max concurrent account runs (0 = unlimited)")
-	timeout := flag.Duration("timeout", defaultAccountTimeout, "connection timeout")
+	configPath := flag.String("config", envOrDefault("config", ""), "path to app config json file")
 	flag.Parse()
-
-	if *concurrency < 0 {
-		return nil, CronSchedule{}, fmt.Errorf("concurrency must be 0 or greater")
-	}
 
 	configValue := strings.TrimSpace(*configPath)
 	if configValue == "" {
-		return nil, CronSchedule{}, fmt.Errorf("config flag is required")
+		return nil, CronSchedule{}, fmt.Errorf("config file is required")
 	}
 
-	loadedConfig, err := loadConfiguredAccounts(configValue, *accountName)
+	loadedConfig, err := loadConfiguredAccounts(configValue)
 	if err != nil {
 		return nil, CronSchedule{}, err
 	}
@@ -67,8 +56,6 @@ func newAppFromFlags() (*App, CronSchedule, error) {
 	return &App{
 		Accounts:          loadedConfig.Accounts,
 		GetEmailAddresses: getEmailAddressesFunc,
-		Timeout:           *timeout,
-		Concurrency:       *concurrency,
 		DefaultAge:        loadedConfig.Age,
 		Now:               time.Now,
 		Output:            os.Stdout,
@@ -213,9 +200,6 @@ func (a *App) runDelete(ctx context.Context, criteria mailbin.DeleteCriteria) ([
 
 	results := make(chan indexedAccountDeleteResult, len(a.Accounts))
 	var sem chan struct{}
-	if a.Concurrency > 0 {
-		sem = make(chan struct{}, a.Concurrency)
-	}
 
 	var wg sync.WaitGroup
 	for index, account := range a.Accounts {

@@ -13,7 +13,6 @@ type App struct {
 	GetEmailAddresses func(context.Context) (EmailsResponse, error)
 	Delete            func(context.Context, mailbin.Config, mailbin.DeleteCriteria) (mailbin.DeleteResult, error)
 	Timeout           time.Duration
-	Concurrency       int
 	DefaultAge        int
 	Now               func() time.Time
 	Output            io.Writer

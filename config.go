@@ -36,14 +36,12 @@ type accountConfig struct {
 
 func loadConfiguredAccounts(
 	configPath string,
-	selectedAccount string,
 ) (loadedAccountsConfig, error) {
 	config, err := readAccountsConfig(configPath)
 	if err != nil {
 		return loadedAccountsConfig{}, err
 	}
 
-	selectedAccount = strings.TrimSpace(selectedAccount)
 	loaded := loadedAccountsConfig{
 		Accounts: make([]ConfiguredAccount, 0, len(config.Accounts)),
 		Age:      *config.Age,
@@ -58,9 +56,6 @@ func loadConfiguredAccounts(
 		name := strings.TrimSpace(configured.Name)
 		if name == "" {
 			name = defaultAccountName(strings.TrimSpace(configured.Email))
-		}
-		if selectedAccount != "" && name != selectedAccount {
-			continue
 		}
 
 		address, err := mailbin.ResolveIMAPAddress(configured.Provider, configured.IMAPAddr)
@@ -79,9 +74,6 @@ func loadConfiguredAccounts(
 		})
 	}
 
-	if selectedAccount != "" && len(loaded.Accounts) == 0 {
-		return loadedAccountsConfig{}, fmt.Errorf("account %q was not found in %s", selectedAccount, configPath)
-	}
 	if len(loaded.Accounts) == 0 {
 		return loadedAccountsConfig{}, fmt.Errorf("accounts config %q does not define any accounts", configPath)
 	}
