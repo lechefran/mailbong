@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -230,10 +232,11 @@ func (a *App) criteriaForAge(ctx context.Context, age int) (mailbin.DeleteCriter
 	}
 	if a != nil {
 		var err error
-		blacklistFromAccounts, err = a.blacklistFromAccounts(ctx)
+		getEmailAddressesRes, err := getEmailAddresses()
 		if err != nil {
 			return mailbin.DeleteCriteria{}, err
 		}
+		blacklistFromAccounts = getEmailAddressesRes.Addresses
 	}
 
 	return mailbin.DeleteCriteria{
@@ -679,4 +682,34 @@ func envIntOrDefault(key string, fallback int) (int, error) {
 	}
 
 	return parsed, nil
+}
+
+func getEmailAddresses() (EmailsResponse, error) {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	req, err := http.NewRequest(http.MethodGet, os.Getenv("GET_ADDR_URL"), nil)
+	if err != nil {
+		return EmailsResponse{}, err
+	}
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("API_KEY"))
+
+	apiRes, err := client.Do(req)
+	if err != nil {
+		return EmailsResponse{}, err
+	}
+	defer apiRes.Body.Close()
+
+	if apiRes.StatusCode < 200 || apiRes.StatusCode >= 300 {
+		return EmailsResponse{}, fmt.Errorf("Failed to obtain email addresses: %w", err)
+	}
+
+	var res EmailsResponse
+	if err = json.NewDecoder(apiRes.Body).Decode(&res); err != nil {
+		return EmailsResponse{}, err
+	}
+	return res, nil
 }
