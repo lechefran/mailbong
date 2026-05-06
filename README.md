@@ -6,18 +6,18 @@
 
 ```bash
 MAILBIN_PASSWORD='app-password' go run . \
-  -provider gmail \
-  -email you@gmail.com \
+  -config accounts.json \
   -schedule "0 0 * * *" \
   -age 30
 ```
 
-It also supports configured accounts via `accounts.json`:
+Run one configured account by name:
 
 ```bash
 MAILBIN_PASSWORD='app-password' go run . -config accounts.json -account work -schedule "0 0 * * *" -age 30
 ```
 
+Account email, provider, and IMAP address values are loaded only from the JSON config.
 `-age` (or `MAILBIN_AGE`) is required and must be `>= 0`.
 `-schedule` is required and must be a valid 5-field cron expression.
 
@@ -61,11 +61,8 @@ Password resolution for configured accounts:
 
 ## Configuration flags
 
-- `-config string`: path to accounts config JSON
+- `-config string`: required path to accounts config JSON; defaults from `MAILBIN_CONFIG` when set
 - `-account string`: account name from config to run
-- `-provider string`: provider for built-in IMAP defaults
-- `-imap-addr string`: explicit IMAP address in `host:port`
-- `-email string`: login email for single-account mode
 - `-schedule string`: required cron schedule (`minute hour day-of-month month day-of-week`)
 - `-age int`: minimum email age in days to delete (`>= 0`)
 - `-concurrency int`: max concurrent account runs (`0` = unlimited)
@@ -75,9 +72,6 @@ Password resolution for configured accounts:
 
 - `MAILBIN_CONFIG`
 - `MAILBIN_ACCOUNT`
-- `MAILBIN_PROVIDER`
-- `MAILBIN_IMAP_ADDR`
-- `MAILBIN_EMAIL`
 - `MAILBIN_AGE`
 - `MAILBIN_CONCURRENCY`
 - `MAILBIN_PASSWORD`

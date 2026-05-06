@@ -37,9 +37,6 @@ func main() {
 func newAppFromFlags() (*App, CronSchedule, error) {
 	configPath := flag.String("config", envOrDefault("MAILBIN_CONFIG", ""), "path to accounts config JSON")
 	accountName := flag.String("account", envOrDefault("MAILBIN_ACCOUNT", ""), "account name from config to run")
-	provider := flag.String("provider", envOrDefault("MAILBIN_PROVIDER", ""), "email provider name for built-in IMAP defaults")
-	address := flag.String("imap-addr", envOrDefault("MAILBIN_IMAP_ADDR", ""), "IMAP server address in host:port format")
-	email := flag.String("email", envOrDefault("MAILBIN_EMAIL", ""), "email address used for IMAP login")
 	scheduleText := flag.String("schedule", "", "cron schedule with 5 fields (minute hour day-of-month month day-of-week)")
 	ageDefault, err := envIntOrDefault("MAILBIN_AGE", -1)
 	if err != nil {
@@ -67,42 +64,23 @@ func newAppFromFlags() (*App, CronSchedule, error) {
 		return nil, CronSchedule{}, err
 	}
 
-	var accounts []ConfiguredAccount
-	var getEmailAddressesFunc func(context.Context) (EmailsResponse, error)
-	if *configPath == "" {
-		password, err := resolvePassword(os.Stdin, os.Stderr, os.Getenv, stdinIsInteractive())
-		if err != nil {
-			return nil, CronSchedule{}, err
-		}
-		addressValue, err := resolveIMAPAddress(*provider, *address)
-		if err != nil {
-			return nil, CronSchedule{}, err
-		}
-
-		accounts = []ConfiguredAccount{
-			{
-				Name: defaultAccountName(strings.TrimSpace(*email)),
-				Config: mailbin.Config{
-					Provider: strings.TrimSpace(*provider),
-					Address:  addressValue,
-					Email:    strings.TrimSpace(*email),
-					Password: password,
-				},
-			},
-		}
-	} else {
-		loadedConfig, err := loadConfiguredAccounts(*configPath, *accountName, os.Stdin, os.Stderr, os.Getenv, stdinIsInteractive())
-		if err != nil {
-			return nil, CronSchedule{}, err
-		}
-		accounts = loadedConfig.Accounts
+	configValue := strings.TrimSpace(*configPath)
+	if configValue == "" {
+		return nil, CronSchedule{}, fmt.Errorf("config flag is required")
 	}
+
+	loadedConfig, err := loadConfiguredAccounts(configValue, *accountName, os.Stdin, os.Stderr, os.Getenv, stdinIsInteractive())
+	if err != nil {
+		return nil, CronSchedule{}, err
+	}
+
+	var getEmailAddressesFunc func(context.Context) (EmailsResponse, error)
 	if strings.TrimSpace(os.Getenv("GET_ADDR_URL")) != "" {
 		getEmailAddressesFunc = getEmailAddresses
 	}
 
 	return &App{
-		Accounts:          accounts,
+		Accounts:          loadedConfig.Accounts,
 		GetEmailAddresses: getEmailAddressesFunc,
 		Timeout:           *timeout,
 		Concurrency:       *concurrency,
