@@ -65,6 +65,8 @@ func TestResolveIMAPAddress(t *testing.T) {
 
 func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
 	configPath := writeAccountsConfig(t, `{
+  "age": 30,
+  "cron": "0 0 * * *",
   "accounts": [
     {
       "name": "gmail",
@@ -114,10 +116,15 @@ func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
 	if accounts[0].Config.Password != "gmail-secret" || accounts[1].Config.Password != "icloud-secret" {
 		t.Fatalf("account passwords = %#v, want provider env passwords", accounts)
 	}
+	if loadedConfig.Age != 30 {
+		t.Fatalf("age = %d, want 30", loadedConfig.Age)
+	}
 }
 
 func TestLoadConfiguredAccountsSelectsOneAccount(t *testing.T) {
 	configPath := writeAccountsConfig(t, `{
+  "age": 30,
+  "cron": "0 0 * * *",
   "accounts": [
     {
       "name": "gmail",
@@ -164,6 +171,8 @@ func TestLoadConfiguredAccountsSelectsOneAccount(t *testing.T) {
 
 func TestLoadConfiguredAccountsUsesAddressOverride(t *testing.T) {
 	configPath := writeAccountsConfig(t, `{
+  "age": 30,
+  "cron": "0 0 * * *",
   "accounts": [
     {
       "name": "custom",
@@ -199,6 +208,8 @@ func TestLoadConfiguredAccountsUsesAddressOverride(t *testing.T) {
 
 func TestLoadConfiguredAccountsIgnoresBlacklistField(t *testing.T) {
 	configPath := writeAccountsConfig(t, `{
+  "age": 30,
+  "cron": "0 0 * * *",
   "blacklist": [
     "blocked@example.com"
   ],
@@ -230,6 +241,86 @@ func TestLoadConfiguredAccountsIgnoresBlacklistField(t *testing.T) {
 	}
 	if len(loadedConfig.Accounts) != 1 {
 		t.Fatalf("loadConfiguredAccounts() count = %d, want 1", len(loadedConfig.Accounts))
+	}
+}
+
+func TestLoadConfiguredAccountsRequiresAgeAndCron(t *testing.T) {
+	testCases := []struct {
+		name          string
+		config        string
+		wantErrorText string
+	}{
+		{
+			name: "missing age",
+			config: `{
+  "cron": "0 0 * * *",
+  "accounts": [
+    {
+      "email": "one@example.com",
+      "provider": "gmail"
+    }
+  ]
+}`,
+			wantErrorText: "missing age",
+		},
+		{
+			name: "negative age",
+			config: `{
+  "age": -1,
+  "cron": "0 0 * * *",
+  "accounts": [
+    {
+      "email": "one@example.com",
+      "provider": "gmail"
+    }
+  ]
+}`,
+			wantErrorText: "age must be 0 or greater",
+		},
+		{
+			name: "missing cron",
+			config: `{
+  "age": 30,
+  "accounts": [
+    {
+      "email": "one@example.com",
+      "provider": "gmail"
+    }
+  ]
+}`,
+			wantErrorText: "missing cron",
+		},
+		{
+			name: "invalid cron",
+			config: `{
+  "age": 30,
+  "cron": "0 0 * *",
+  "accounts": [
+    {
+      "email": "one@example.com",
+      "provider": "gmail"
+    }
+  ]
+}`,
+			wantErrorText: "cron",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			configPath := writeAccountsConfig(t, testCase.config)
+			_, err := loadConfiguredAccounts(
+				configPath,
+				"",
+				strings.NewReader(""),
+				&bytes.Buffer{},
+				func(string) string { return "" },
+				false,
+			)
+			if err == nil || !strings.Contains(err.Error(), testCase.wantErrorText) {
+				t.Fatalf("loadConfiguredAccounts() error = %v, want %q", err, testCase.wantErrorText)
+			}
+		})
 	}
 }
 

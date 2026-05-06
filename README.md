@@ -6,20 +6,16 @@
 
 ```bash
 MAILBIN_PASSWORD='app-password' go run . \
-  -config accounts.json \
-  -schedule "0 0 * * *" \
-  -age 30
+  -config accounts.json
 ```
 
 Run one configured account by name:
 
 ```bash
-MAILBIN_PASSWORD='app-password' go run . -config accounts.json -account work -schedule "0 0 * * *" -age 30
+MAILBIN_PASSWORD='app-password' go run . -config accounts.json -account work
 ```
 
-Account email, provider, and IMAP address values are loaded only from the JSON config.
-`-age` (or `MAILBIN_AGE`) is required and must be `>= 0`.
-`-schedule` is required and must be a valid 5-field cron expression.
+Account email, provider, IMAP address, age, and cron values are loaded only from the JSON config.
 
 The process stays running and triggers at matching times in local time.
 
@@ -46,6 +42,8 @@ Use [`accounts.example.json`](./accounts.example.json) as a template.
 When `GET_ADDR_URL` is set, `mailbong` fetches blacklist addresses from that JSON API before each delete run.
 Messages from fetched blacklist senders match the delete criteria regardless of age.
 
+- `age`: required minimum email age in days to delete (`>= 0`).
+- `cron`: required 5-field cron schedule (`minute hour day-of-month month day-of-week`).
 - `name`: optional display name; defaults to the account email.
 - `email`: required IMAP login email.
 - `provider`: optional provider key for built-in IMAP defaults (`gmail`, `icloud`, `outlook`, `yahoo`, `aol`, `aol_export`, `zoho`).
@@ -63,8 +61,6 @@ Password resolution for configured accounts:
 
 - `-config string`: required path to accounts config JSON; defaults from `MAILBIN_CONFIG` when set
 - `-account string`: account name from config to run
-- `-schedule string`: required cron schedule (`minute hour day-of-month month day-of-week`)
-- `-age int`: minimum email age in days to delete (`>= 0`)
 - `-concurrency int`: max concurrent account runs (`0` = unlimited)
 - `-timeout duration`: per-account timeout (default `30s`)
 
@@ -72,7 +68,6 @@ Password resolution for configured accounts:
 
 - `MAILBIN_CONFIG`
 - `MAILBIN_ACCOUNT`
-- `MAILBIN_AGE`
 - `MAILBIN_CONCURRENCY`
 - `MAILBIN_PASSWORD`
 - `GET_ADDR_URL`

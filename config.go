@@ -30,10 +30,14 @@ type ConfiguredAccount struct {
 
 type loadedAccountsConfig struct {
 	Accounts []ConfiguredAccount
+	Age      int
+	Schedule CronSchedule
 }
 
 type accountsConfig struct {
 	Accounts []accountConfig `json:"accounts"`
+	Age      *int            `json:"age"`
+	Cron     string          `json:"cron"`
 }
 
 type accountConfig struct {
@@ -64,7 +68,14 @@ func loadConfiguredAccounts(
 	selectedAccount = strings.TrimSpace(selectedAccount)
 	loaded := loadedAccountsConfig{
 		Accounts: make([]ConfiguredAccount, 0, len(config.Accounts)),
+		Age:      *config.Age,
 	}
+	schedule, err := parseCronSchedule(config.Cron)
+	if err != nil {
+		return loadedAccountsConfig{}, err
+	}
+	loaded.Schedule = schedule
+
 	for _, configured := range config.Accounts {
 		name := strings.TrimSpace(configured.Name)
 		if name == "" {
@@ -118,6 +129,15 @@ func readAccountsConfig(configPath string) (*accountsConfig, error) {
 
 	if len(config.Accounts) == 0 {
 		return nil, fmt.Errorf("accounts config %q does not define any accounts", configPath)
+	}
+	if config.Age == nil {
+		return nil, fmt.Errorf("accounts config %q is missing age", configPath)
+	}
+	if *config.Age < 0 {
+		return nil, fmt.Errorf("accounts config %q age must be 0 or greater", configPath)
+	}
+	if strings.TrimSpace(config.Cron) == "" {
+		return nil, fmt.Errorf("accounts config %q is missing cron", configPath)
 	}
 
 	seenNames := make(map[string]struct{}, len(config.Accounts))

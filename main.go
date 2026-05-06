@@ -37,12 +37,6 @@ func main() {
 func newAppFromFlags() (*App, CronSchedule, error) {
 	configPath := flag.String("config", envOrDefault("MAILBIN_CONFIG", ""), "path to accounts config JSON")
 	accountName := flag.String("account", envOrDefault("MAILBIN_ACCOUNT", ""), "account name from config to run")
-	scheduleText := flag.String("schedule", "", "cron schedule with 5 fields (minute hour day-of-month month day-of-week)")
-	ageDefault, err := envIntOrDefault("MAILBIN_AGE", -1)
-	if err != nil {
-		return nil, CronSchedule{}, err
-	}
-	age := flag.Int("age", ageDefault, "minimum email age in days to delete")
 	concurrencyDefault, err := envIntOrDefault("MAILBIN_CONCURRENCY", 0)
 	if err != nil {
 		return nil, CronSchedule{}, err
@@ -53,15 +47,6 @@ func newAppFromFlags() (*App, CronSchedule, error) {
 
 	if *concurrency < 0 {
 		return nil, CronSchedule{}, fmt.Errorf("concurrency must be 0 or greater")
-	}
-
-	scheduleValue := strings.TrimSpace(*scheduleText)
-	if scheduleValue == "" {
-		return nil, CronSchedule{}, fmt.Errorf("schedule flag is required")
-	}
-	schedule, err := parseCronSchedule(scheduleValue)
-	if err != nil {
-		return nil, CronSchedule{}, err
 	}
 
 	configValue := strings.TrimSpace(*configPath)
@@ -84,10 +69,10 @@ func newAppFromFlags() (*App, CronSchedule, error) {
 		GetEmailAddresses: getEmailAddressesFunc,
 		Timeout:           *timeout,
 		Concurrency:       *concurrency,
-		DefaultAge:        *age,
+		DefaultAge:        loadedConfig.Age,
 		Now:               time.Now,
 		Output:            os.Stdout,
-	}, schedule, nil
+	}, loadedConfig.Schedule, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
@@ -417,33 +402,33 @@ func defaultAccountName(email string) string {
 func parseCronSchedule(value string) (CronSchedule, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return CronSchedule{}, fmt.Errorf("MAILBONG_SCHEDULE must be a cron expression with 5 fields")
+		return CronSchedule{}, fmt.Errorf("cron must be an expression with 5 fields")
 	}
 
 	parts := strings.Fields(value)
 	if len(parts) != 5 {
-		return CronSchedule{}, fmt.Errorf("MAILBONG_SCHEDULE %q must have 5 cron fields", value)
+		return CronSchedule{}, fmt.Errorf("cron %q must have 5 cron fields", value)
 	}
 
 	minute, err := parseCronField(parts[0], 0, 59, false)
 	if err != nil {
-		return CronSchedule{}, fmt.Errorf("MAILBONG_SCHEDULE minute field: %w", err)
+		return CronSchedule{}, fmt.Errorf("cron minute field: %w", err)
 	}
 	hour, err := parseCronField(parts[1], 0, 23, false)
 	if err != nil {
-		return CronSchedule{}, fmt.Errorf("MAILBONG_SCHEDULE hour field: %w", err)
+		return CronSchedule{}, fmt.Errorf("cron hour field: %w", err)
 	}
 	dayOfMonth, err := parseCronField(parts[2], 1, 31, false)
 	if err != nil {
-		return CronSchedule{}, fmt.Errorf("MAILBONG_SCHEDULE day-of-month field: %w", err)
+		return CronSchedule{}, fmt.Errorf("cron day-of-month field: %w", err)
 	}
 	month, err := parseCronField(parts[3], 1, 12, false)
 	if err != nil {
-		return CronSchedule{}, fmt.Errorf("MAILBONG_SCHEDULE month field: %w", err)
+		return CronSchedule{}, fmt.Errorf("cron month field: %w", err)
 	}
 	dayOfWeek, err := parseCronField(parts[4], 0, 7, true)
 	if err != nil {
-		return CronSchedule{}, fmt.Errorf("MAILBONG_SCHEDULE day-of-week field: %w", err)
+		return CronSchedule{}, fmt.Errorf("cron day-of-week field: %w", err)
 	}
 
 	return CronSchedule{
@@ -559,7 +544,7 @@ func nextCronRun(value time.Time, schedule CronSchedule) (time.Time, error) {
 		candidate = candidate.Add(time.Minute)
 	}
 
-	return time.Time{}, fmt.Errorf("MAILBONG_SCHEDULE has no matching run time in next 5 years")
+	return time.Time{}, fmt.Errorf("cron has no matching run time in next 5 years")
 }
 
 func (s CronSchedule) matches(value time.Time) bool {

@@ -1,4 +1,6 @@
 {
+  "age": 30,
+  "cron": "0 0 * * *",
   "accounts": [
     {
       "name": "gmail",
