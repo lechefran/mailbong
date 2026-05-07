@@ -8,7 +8,7 @@
 go run . -config accounts.json
 ```
 
-Account email, provider, IMAP address, age, and cron values are loaded only from the JSON config.
+Account email, provider, IMAP address, password, age, cron, and blacklist API values are loaded only from the JSON config.
 
 The process stays running and triggers at matching times in local time.
 
@@ -32,11 +32,13 @@ Supported cron tokens per field:
 
 Use [`accounts.example.json`](./accounts.example.json) as a template.
 
-When `GET_ADDR_URL` is set, `mailbong` fetches blacklist addresses from that JSON API before each delete run.
+`mailbong` fetches blacklist addresses from `getEmailAddressesUrl` before each delete run using `apiKey` as a bearer token.
 Messages from fetched blacklist senders match the delete criteria regardless of age.
 
 - `age`: required minimum email age in days to delete (`>= 0`).
+- `apiKey`: required bearer token for the blacklist email-address API.
 - `cron`: required 5-field cron schedule (`minute hour day-of-month month day-of-week`).
+- `getEmailAddressesUrl`: required URL for fetching blacklist sender addresses.
 - `name`: optional display name; defaults to the account email.
 - `email`: required IMAP login email.
 - `provider`: optional provider key for built-in IMAP defaults (`gmail`, `icloud`, `outlook`, `yahoo`, `aol`, `aol_export`, `zoho`).
@@ -55,5 +57,3 @@ Password resolution for configured accounts:
 ## Environment variables
 
 - `MAILBIN_CONFIG`
-- `GET_ADDR_URL`
-- `API_KEY`
