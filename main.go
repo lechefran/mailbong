@@ -35,7 +35,7 @@ func main() {
 }
 
 func newAppFromFlags() (*App, CronSchedule, error) {
-	configPath := flag.String("config", envOrDefault("MAILBIN_CONFIG", ""), "path to app config json file")
+	configPath := flag.String("config", envOrDefault("MAILBONG_CONFIG", ""), "path to app config json file")
 	flag.Parse()
 
 	configValue := strings.TrimSpace(*configPath)
@@ -567,14 +567,6 @@ func envOrDefault(key, fallback string) string {
 }
 
 func getEmailAddresses(ctx context.Context, url, key string) (EmailsResponse, error) {
-	if url == "" {
-		return EmailsResponse{}, nil
-	}
-
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-	}
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return EmailsResponse{}, err
@@ -583,7 +575,7 @@ func getEmailAddresses(ctx context.Context, url, key string) (EmailsResponse, er
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
 
-	apiRes, err := client.Do(req)
+	apiRes, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return EmailsResponse{}, err
 	}

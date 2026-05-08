@@ -30,7 +30,7 @@ Supported cron tokens per field:
 
 ## Accounts Config
 
-Use [`accounts.example.json`](./accounts.example.json) as a template.
+Use [`app.example.json`](./accounts.example.json) as a template.
 
 `mailbong` fetches blacklist addresses from `getEmailAddressesUrl` before each delete run using `apiKey` as a bearer token.
 Messages from fetched blacklist senders match the delete criteria regardless of age.
@@ -56,4 +56,4 @@ Password resolution for configured accounts:
 
 ## Environment variables
 
-- `MAILBIN_CONFIG`
+- `MAILBONG_CONFIG`

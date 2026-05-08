@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -199,6 +201,73 @@ func TestAppRunPreservesPartialDeletesOnFailure(t *testing.T) {
 	}
 	if !strings.Contains(output, "deleted 1 emails") {
 		t.Fatalf("Run() output = %q, want delete count", output)
+	}
+}
+
+func TestGetEmailAddressesSendsHeadersAndDecodesAddresses(t *testing.T) {
+	const apiKey = "test-api-key"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("request method = %s, want GET", r.Method)
+		}
+		if got := r.Header.Get("Accept"); got != "application/json" {
+			t.Fatalf("Accept header = %q, want application/json", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer "+apiKey {
+			t.Fatalf("Authorization header = %q, want bearer token", got)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"addresses":["one@example.com","two@example.com"]}`))
+	}))
+	defer server.Close()
+
+	got, err := getEmailAddresses(context.Background(), server.URL, apiKey)
+	if err != nil {
+		t.Fatalf("getEmailAddresses() error = %v", err)
+	}
+
+	want := []string{"one@example.com", "two@example.com"}
+	if !slices.Equal(got.Addresses, want) {
+		t.Fatalf("getEmailAddresses() addresses = %#v, want %#v", got.Addresses, want)
+	}
+}
+
+func TestGetEmailAddressesReturnsErrors(t *testing.T) {
+	testCases := []struct {
+		name          string
+		status        int
+		body          string
+		wantErrorText string
+	}{
+		{
+			name:          "non success status",
+			status:        http.StatusUnauthorized,
+			body:          `{"error":"unauthorized"}`,
+			wantErrorText: "401 Unauthorized",
+		},
+		{
+			name:          "invalid json",
+			status:        http.StatusOK,
+			body:          `{`,
+			wantErrorText: "unexpected EOF",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(testCase.status)
+				_, _ = w.Write([]byte(testCase.body))
+			}))
+			defer server.Close()
+
+			_, err := getEmailAddresses(context.Background(), server.URL, "test-api-key")
+			if err == nil || !strings.Contains(err.Error(), testCase.wantErrorText) {
+				t.Fatalf("getEmailAddresses() error = %v, want %q", err, testCase.wantErrorText)
+			}
+		})
 	}
 }
 
