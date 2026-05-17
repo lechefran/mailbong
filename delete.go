@@ -33,9 +33,6 @@ func (a *App) runDelete(ctx context.Context, criteria mailbin.DeleteCriteria) ([
 
 	var wg sync.WaitGroup
 	for index, account := range a.Accounts {
-		index := index
-		account := account
-
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
