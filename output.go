@@ -22,10 +22,6 @@ func writeDeleteOutput(output io.Writer, results []accountDeleteResult) error {
 		}
 	}
 
-	if _, err := fmt.Fprintf(output, "deleted %d emails\n", totalDeleted); err != nil {
-		return err
-	}
-
 	_, err := fmt.Fprintf(
 		output,
 		"summary: deleted total=%d emails across accounts=%d (successful=%d failed=%d)\n",
