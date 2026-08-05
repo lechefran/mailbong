@@ -23,11 +23,6 @@ type accountDeleteResult struct {
 	Err         error
 }
 
-type indexedAccountDeleteResult struct {
-	Index  int
-	Result accountDeleteResult
-}
-
 type CronSchedule struct {
 	Minute     cronField
 	Hour       cronField

@@ -12,17 +12,17 @@ import (
 type loadedAccountsConfig struct {
 	Accounts             []ConfiguredAccount
 	Age                  int
-	ApiKey               string
+	APIKey               string
 	Schedule             CronSchedule
-	GetEmailAddressesUrl string
+	GetEmailAddressesURL string
 }
 
 type accountsConfig struct {
 	Accounts             []accountConfig `json:"accounts"`
 	Age                  *int            `json:"age"`
-	ApiKey               string          `json:"apiKey"`
+	APIKey               string          `json:"apiKey"`
 	Cron                 string          `json:"cron"`
-	GetEmailAddressesUrl string          `json:"getEmailAddressesUrl"`
+	GetEmailAddressesURL string          `json:"getEmailAddressesUrl"`
 }
 
 type accountConfig struct {
@@ -33,9 +33,7 @@ type accountConfig struct {
 	Password string `json:"password"`
 }
 
-func loadConfiguredAccounts(
-	configPath string,
-) (loadedAccountsConfig, error) {
+func loadConfiguredAccounts(configPath string) (loadedAccountsConfig, error) {
 	config, err := readAppConfig(configPath)
 	if err != nil {
 		return loadedAccountsConfig{}, err
@@ -44,8 +42,8 @@ func loadConfiguredAccounts(
 	loaded := loadedAccountsConfig{
 		Accounts:             make([]ConfiguredAccount, 0, len(config.Accounts)),
 		Age:                  *config.Age,
-		ApiKey:               config.ApiKey,
-		GetEmailAddressesUrl: config.GetEmailAddressesUrl,
+		APIKey:               strings.TrimSpace(config.APIKey),
+		GetEmailAddressesURL: strings.TrimSpace(config.GetEmailAddressesURL),
 	}
 	schedule, err := parseCronSchedule(config.Cron)
 	if err != nil {
@@ -54,10 +52,7 @@ func loadConfiguredAccounts(
 	loaded.Schedule = schedule
 
 	for _, configured := range config.Accounts {
-		name := strings.TrimSpace(configured.Name)
-		if name == "" {
-			name = defaultAccountName(strings.TrimSpace(configured.Email))
-		}
+		name := configuredAccountName(configured)
 
 		address, err := mailbin.ResolveIMAPAddress(configured.Provider, configured.IMAPAddr)
 		if err != nil {
@@ -73,10 +68,6 @@ func loadConfiguredAccounts(
 				Password: configured.Password,
 			},
 		})
-	}
-
-	if len(loaded.Accounts) == 0 {
-		return loadedAccountsConfig{}, fmt.Errorf("accounts config %q does not define any accounts", configPath)
 	}
 
 	return loaded, nil
@@ -102,13 +93,13 @@ func readAppConfig(configPath string) (*accountsConfig, error) {
 	if *config.Age < 0 {
 		return nil, fmt.Errorf("app config %q age must be 0 or greater", configPath)
 	}
-	if strings.TrimSpace(config.ApiKey) == "" {
+	if strings.TrimSpace(config.APIKey) == "" {
 		return nil, fmt.Errorf("app config %q api key is missing", configPath)
 	}
 	if strings.TrimSpace(config.Cron) == "" {
 		return nil, fmt.Errorf("app config %q is missing cron", configPath)
 	}
-	if strings.TrimSpace(config.GetEmailAddressesUrl) == "" {
+	if strings.TrimSpace(config.GetEmailAddressesURL) == "" {
 		return nil, fmt.Errorf("app config %q get email addresses url is missing", configPath)
 	}
 
@@ -121,10 +112,7 @@ func readAppConfig(configPath string) (*accountsConfig, error) {
 			return nil, fmt.Errorf("account %d is missing password", index+1)
 		}
 
-		name := strings.TrimSpace(account.Name)
-		if name == "" {
-			name = defaultAccountName(strings.TrimSpace(account.Email))
-		}
+		name := configuredAccountName(account)
 		if _, exists := seenNames[name]; exists {
 			return nil, fmt.Errorf("accounts config %q contains duplicate account name %q", configPath, name)
 		}
@@ -132,4 +120,12 @@ func readAppConfig(configPath string) (*accountsConfig, error) {
 	}
 
 	return &config, nil
+}
+
+func configuredAccountName(account accountConfig) string {
+	if name := strings.TrimSpace(account.Name); name != "" {
+		return name
+	}
+
+	return strings.TrimSpace(account.Email)
 }

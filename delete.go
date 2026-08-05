@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -29,64 +28,39 @@ func (a *App) runDelete(ctx context.Context, criteria mailbin.DeleteCriteria) ([
 		deleteAccount = deleteWithClient
 	}
 
-	results := make(chan indexedAccountDeleteResult, len(a.Accounts))
+	results := make([]accountDeleteResult, len(a.Accounts))
 
 	var wg sync.WaitGroup
 	for index, account := range a.Accounts {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			runCtx, cancel := context.WithTimeout(ctx, defaultAccountTimeout)
 			defer cancel()
 
 			result, err := deleteAccount(runCtx, account.Config, criteria)
-			results <- indexedAccountDeleteResult{
-				Index: index,
-				Result: accountDeleteResult{
-					AccountName: account.Name,
-					Result:      result,
-					Err:         err,
-				},
+			results[index] = accountDeleteResult{
+				AccountName: account.Name,
+				Result:      result,
+				Err:         err,
 			}
-		}()
+		})
 	}
+	wg.Wait()
 
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	collected := make([]accountDeleteResult, len(a.Accounts))
-	for result := range results {
-		collected[result.Index] = result.Result
-	}
-
-	totalDeleted := 0
-	failures := make([]string, 0, len(collected))
-	for _, result := range collected {
-		totalDeleted += len(result.Result.Deleted)
+	failures := make([]string, 0, len(results))
+	for _, result := range results {
 		if result.Err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", result.AccountName, result.Err))
 		}
 	}
 
-	if totalDeleted == 0 && len(failures) > 0 {
-		return collected, fmt.Errorf("%d account(s) failed: %s", len(failures), strings.Join(failures, "; "))
-	}
-
 	if len(failures) > 0 {
-		return collected, fmt.Errorf("%d account(s) failed: %s", len(failures), strings.Join(failures, "; "))
+		return results, fmt.Errorf("%d account(s) failed: %s", len(failures), strings.Join(failures, "; "))
 	}
 
-	return collected, nil
+	return results, nil
 }
 
 func deleteWithClient(ctx context.Context, config mailbin.Config, criteria mailbin.DeleteCriteria) (mailbin.DeleteResult, error) {
-	if config.Logf == nil {
-		config.Logf = log.Printf
-	}
-
 	client, err := mailbin.NewClient(config)
 	if err != nil {
 		return mailbin.DeleteResult{}, err

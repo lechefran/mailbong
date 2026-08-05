@@ -26,7 +26,7 @@ func main() {
 }
 
 func newApp() (*App, CronSchedule, error) {
-	configPath := flag.String("config", envOrDefault("MAILBONG_CONFIG", ""), "path to app config json file")
+	configPath := flag.String("config", os.Getenv("MAILBONG_CONFIG"), "path to app config json file")
 	flag.Parse()
 
 	configValue := strings.TrimSpace(*configPath)
@@ -39,11 +39,8 @@ func newApp() (*App, CronSchedule, error) {
 		return nil, CronSchedule{}, err
 	}
 
-	var getEmailAddressesFunc func(context.Context) (EmailsResponse, error)
-	if strings.TrimSpace(loadedConfig.GetEmailAddressesUrl) != "" && strings.TrimSpace(loadedConfig.ApiKey) != "" {
-		getEmailAddressesFunc = func(ctx context.Context) (EmailsResponse, error) {
-			return getEmailAddresses(ctx, loadedConfig.GetEmailAddressesUrl, loadedConfig.ApiKey)
-		}
+	getEmailAddressesFunc := func(ctx context.Context) (EmailsResponse, error) {
+		return getEmailAddresses(ctx, loadedConfig.GetEmailAddressesURL, loadedConfig.APIKey)
 	}
 
 	return &App{

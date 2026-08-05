@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 )
+
+const blacklistRequestTimeout = 5 * time.Second
 
 func getEmailAddresses(ctx context.Context, url, key string) (EmailsResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -16,7 +19,8 @@ func getEmailAddresses(ctx context.Context, url, key string) (EmailsResponse, er
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
 
-	apiRes, err := http.DefaultClient.Do(req)
+	client := http.Client{Timeout: blacklistRequestTimeout}
+	apiRes, err := client.Do(req)
 	if err != nil {
 		return EmailsResponse{}, err
 	}

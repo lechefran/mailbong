@@ -48,7 +48,6 @@ func runOnCronSchedule(ctx context.Context, app *App, now func() time.Time, sche
 			continue
 		}
 
-		log.Printf("scheduled delete run completed")
 	}
 }
 

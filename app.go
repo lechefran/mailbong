@@ -11,13 +11,17 @@ import (
 )
 
 func (a *App) Run(ctx context.Context) error {
+	if a == nil {
+		return fmt.Errorf("app is required")
+	}
+
 	criteria, err := a.criteriaForAge(ctx, a.DefaultAge)
 	if err != nil {
 		return err
 	}
 
 	results, err := a.runDelete(ctx, criteria)
-	if err != nil && totalDeletedMessages(results) == 0 {
+	if err != nil && !hasDeletedMessages(results) {
 		return err
 	}
 
@@ -32,13 +36,14 @@ func (a *App) Run(ctx context.Context) error {
 	return err
 }
 
-func totalDeletedMessages(results []accountDeleteResult) int {
-	total := 0
+func hasDeletedMessages(results []accountDeleteResult) bool {
 	for _, result := range results {
-		total += len(result.Result.Deleted)
+		if len(result.Result.Deleted) > 0 {
+			return true
+		}
 	}
 
-	return total
+	return false
 }
 
 func (a *App) criteriaForAge(ctx context.Context, age int) (mailbin.DeleteCriteria, error) {
@@ -46,23 +51,29 @@ func (a *App) criteriaForAge(ctx context.Context, age int) (mailbin.DeleteCriter
 		return mailbin.DeleteCriteria{}, fmt.Errorf("age is required and must be 0 or greater")
 	}
 
-	now := time.Now
+	now := a.Now
 	var blacklistFromAccounts []string
-	if a != nil && a.Now != nil {
-		now = a.Now
+	if now == nil {
+		now = time.Now
 	}
-	if a != nil && a.GetEmailAddresses != nil {
+	if a.GetEmailAddresses != nil {
 		getEmailAddressesRes, err := a.GetEmailAddresses(ctx)
 		if err != nil {
 			return mailbin.DeleteCriteria{}, err
 		}
-		blacklistFromAccounts = append(blacklistFromAccounts, getEmailAddressesRes.Addresses...)
+		blacklistFromAccounts = getEmailAddressesRes.Addresses
 	}
 
 	return mailbin.DeleteCriteria{
 		ReceivedBefore: deleteCutoff(now(), age),
 		FromAccounts:   normalizeBlacklistFromAccounts(blacklistFromAccounts),
 	}, nil
+}
+
+func deleteCutoff(now time.Time, age int) time.Time {
+	cutoffDay := now.AddDate(0, 0, -age)
+	year, month, day := cutoffDay.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, cutoffDay.Location()).AddDate(0, 0, 1)
 }
 
 func normalizeBlacklistFromAccounts(accounts []string) []string {

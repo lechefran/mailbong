@@ -22,7 +22,7 @@ func testMailConfig(email string) mailbin.Config {
 	}
 }
 
-func TestAppRunWritesDeletedSummariesAndCounts(t *testing.T) {
+func TestAppRunWritesDeleteSummary(t *testing.T) {
 	buffer := &bytes.Buffer{}
 	app := &App{
 		Accounts: []ConfiguredAccount{
@@ -53,15 +53,16 @@ func TestAppRunWritesDeletedSummariesAndCounts(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	output := buffer.String()
-	if !strings.Contains(output, "Today message") {
-		t.Fatalf("Run() output = %q, want subject", output)
+	want := "summary: deleted total=1 emails across accounts=1 (successful=1 failed=0)\n"
+	if got := buffer.String(); got != want {
+		t.Fatalf("Run() output = %q, want %q", got, want)
 	}
-	if !strings.Contains(output, "deleted 1 emails") {
-		t.Fatalf("Run() output = %q, want count", output)
-	}
-	if !strings.Contains(output, "summary: deleted total=1 emails across accounts=1 (successful=1 failed=0)") {
-		t.Fatalf("Run() output = %q, want summary", output)
+}
+
+func TestAppRunRejectsNilApp(t *testing.T) {
+	var app *App
+	if err := app.Run(context.Background()); err == nil || err.Error() != "app is required" {
+		t.Fatalf("Run() error = %v, want app is required", err)
 	}
 }
 
@@ -195,12 +196,9 @@ func TestAppRunPreservesPartialDeletesOnFailure(t *testing.T) {
 		t.Fatal("Run() error = nil, want failure")
 	}
 
-	output := buffer.String()
-	if !strings.Contains(output, "partial") {
-		t.Fatalf("Run() output = %q, want deleted summary", output)
-	}
-	if !strings.Contains(output, "deleted 1 emails") {
-		t.Fatalf("Run() output = %q, want delete count", output)
+	want := "summary: deleted total=1 emails across accounts=1 (successful=0 failed=1)\n"
+	if got := buffer.String(); got != want {
+		t.Fatalf("Run() output = %q, want %q", got, want)
 	}
 }
 
@@ -268,6 +266,16 @@ func TestGetEmailAddressesReturnsErrors(t *testing.T) {
 				t.Fatalf("getEmailAddresses() error = %v, want %q", err, testCase.wantErrorText)
 			}
 		})
+	}
+}
+
+func TestGetEmailAddressesHonorsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := getEmailAddresses(ctx, "https://example.com", "test-api-key")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("getEmailAddresses() error = %v, want context cancellation", err)
 	}
 }
 

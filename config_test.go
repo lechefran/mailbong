@@ -12,9 +12,9 @@ import (
 func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
 	configPath := writeAccountsConfig(t, `{
   "age": 30,
-  "apiKey": "test-api-key",
+  "apiKey": " test-api-key ",
   "cron": "0 0 * * *",
-  "getEmailAddressesUrl": "https://example.com/getEmailAddresses",
+  "getEmailAddressesUrl": " https://example.com/getEmailAddresses ",
   "accounts": [
     {
       "name": "gmail",
@@ -53,11 +53,11 @@ func TestLoadConfiguredAccountsUsesProviderDefaults(t *testing.T) {
 	if loadedConfig.Age != 30 {
 		t.Fatalf("age = %d, want 30", loadedConfig.Age)
 	}
-	if loadedConfig.ApiKey != "test-api-key" {
-		t.Fatalf("api key = %q, want test-api-key", loadedConfig.ApiKey)
+	if loadedConfig.APIKey != "test-api-key" {
+		t.Fatalf("api key = %q, want test-api-key", loadedConfig.APIKey)
 	}
-	if loadedConfig.GetEmailAddressesUrl != "https://example.com/getEmailAddresses" {
-		t.Fatalf("get email addresses url = %q, want configured url", loadedConfig.GetEmailAddressesUrl)
+	if loadedConfig.GetEmailAddressesURL != "https://example.com/getEmailAddresses" {
+		t.Fatalf("get email addresses url = %q, want configured url", loadedConfig.GetEmailAddressesURL)
 	}
 }
 
